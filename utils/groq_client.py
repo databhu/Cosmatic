@@ -12,13 +12,16 @@ import requests
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-# A small set of currently-available Groq-hosted models.
-# Users can add/edit this list as Groq's lineup changes.
+# Groq-hosted models currently available for chat completions (checked against
+# console.groq.com/docs/models). Groq deprecates models on short notice, so if
+# you get a 400/404 "model not found" error, check that page and update this
+# list - the AVAILABLE_MODELS list is the only place you need to edit.
 AVAILABLE_MODELS = [
-    "llama-3.3-70b-versatile",
-    "llama-3.1-8b-instant",
-    "mixtral-8x7b-32768",
-    "gemma2-9b-it",
+    "openai/gpt-oss-120b",   # Production model - flagship, best quality
+    "openai/gpt-oss-20b",    # Production model - smaller/faster/cheaper
+    "groq/compound",         # Production system - can auto-use web search/code execution tools
+    "groq/compound-mini",    # Production system - lighter version of the above
+    "qwen/qwen3.6-27b",      # Preview model - strong reasoning, but Groq preview models can be pulled without much notice
 ]
 
 SYSTEM_PROMPT = """You are a senior cosmetic formulation scientist assisting an R&D chemist.

@@ -1,0 +1,45 @@
+inci_name,common_name,category,function,typical_ph_min,typical_ph_max,max_use_percent,cost_per_kg_usd,sustainability_score,biodegradable,eu_allowed,eu_max_percent,eu_notes,us_allowed,us_max_percent,us_notes,india_allowed,india_max_percent,india_notes
+Aqua,Water,Solvent,Diluent/Base,5.0,8.0,100,0.01,10,TRUE,TRUE,,No restriction,TRUE,,No restriction,TRUE,,No restriction
+Glycerin,Glycerin,Humectant,Moisturizing,4.0,8.0,20,2.2,9,TRUE,TRUE,,No restriction,TRUE,,No restriction,TRUE,,No restriction
+Propylene Glycol,Propylene Glycol,Humectant/Solvent,Moisturizing,4.0,8.0,15,1.8,5,TRUE,TRUE,,No restriction,TRUE,,No restriction,TRUE,,No restriction
+Butylene Glycol,Butylene Glycol,Humectant/Solvent,Moisturizing,4.0,8.0,15,3.5,6,TRUE,TRUE,,No restriction,TRUE,,No restriction,TRUE,,No restriction
+Cetearyl Alcohol,Cetearyl Alcohol,Emulsifier/Thickener,Co-emulsifier,4.0,8.0,8,4.0,6,TRUE,TRUE,,No restriction,TRUE,,No restriction,TRUE,,No restriction
+Glyceryl Stearate,Glyceryl Stearate,Emulsifier,Primary emulsifier,4.0,8.0,5,4.5,7,TRUE,TRUE,,No restriction,TRUE,,No restriction,TRUE,,No restriction
+PEG-100 Stearate,PEG-100 Stearate,Emulsifier,Primary emulsifier,4.0,8.0,5,5.0,3,FALSE,TRUE,,Monitor 1;4-dioxane trace,TRUE,,No restriction,TRUE,,No restriction
+Stearic Acid,Stearic Acid,Emollient/Emulsifier,Thickening/co-emulsifier,4.0,8.0,6,3.2,7,TRUE,TRUE,,No restriction,TRUE,,No restriction,TRUE,,No restriction
+Cetyl Alcohol,Cetyl Alcohol,Emollient/Thickener,Texture/thickening,4.0,8.0,8,3.6,6,TRUE,TRUE,,No restriction,TRUE,,No restriction,TRUE,,No restriction
+Dimethicone,Dimethicone,Emollient,Silicone conditioning agent,4.0,9.0,10,6.5,2,FALSE,TRUE,,No restriction,TRUE,,No restriction,TRUE,,No restriction
+Cyclopentasiloxane,Cyclopentasiloxane,Emollient,Silicone volatile carrier,4.0,9.0,10,7.0,1,FALSE,TRUE,0.1,Restricted (D5) in rinse-off,TRUE,,No restriction,TRUE,,No restriction
+Xanthan Gum,Xanthan Gum,Thickener,Rheology modifier,3.0,10.0,1.5,8.5,9,TRUE,TRUE,,No restriction,TRUE,,No restriction,TRUE,,No restriction
+Carbomer,Carbomer,Thickener,Gelling agent,5.0,8.0,1,9.0,5,FALSE,TRUE,,No restriction,TRUE,,No restriction,TRUE,,No restriction
+Sodium Lauryl Sulfate,SLS,Surfactant,Anionic cleansing agent,6.0,9.0,15,2.0,3,TRUE,TRUE,,No restriction,TRUE,,No restriction,TRUE,,No restriction
+Sodium Laureth Sulfate,SLES,Surfactant,Anionic cleansing agent,6.0,9.0,15,2.3,3,TRUE,TRUE,,Monitor 1;4-dioxane trace,TRUE,,No restriction,TRUE,,No restriction
+Cocamidopropyl Betaine,CAPB,Surfactant,Amphoteric/co-surfactant,5.0,9.0,10,3.8,6,TRUE,TRUE,,No restriction,TRUE,,No restriction,TRUE,,No restriction
+Phenoxyethanol,Phenoxyethanol,Preservative,Antimicrobial,4.0,8.0,1,4.2,4,FALSE,TRUE,1.0,Max 1%,TRUE,,No restriction,TRUE,1.0,Max 1%
+Ethylhexylglycerin,Ethylhexylglycerin,Preservative Booster,Deodorant/co-preservative,4.0,8.0,1,9.5,5,FALSE,TRUE,,No restriction,TRUE,,No restriction,TRUE,,No restriction
+Methylparaben,Methylparaben,Preservative,Antimicrobial,4.0,8.0,0.4,3.0,3,TRUE,TRUE,0.4,Single max 0.4%; combined max 0.8%,TRUE,,GRAS,TRUE,0.4,Aligned with EU
+Propylparaben,Propylparaben,Preservative,Antimicrobial,4.0,8.0,0.4,3.4,3,TRUE,TRUE,0.4,Single max 0.4%; combined max 0.8%,TRUE,,GRAS,TRUE,0.4,Aligned with EU
+Sodium Benzoate,Sodium Benzoate,Preservative,Antimicrobial,3.0,5.0,0.5,2.5,7,TRUE,TRUE,0.5,Most effective below pH 5,TRUE,,No restriction,TRUE,0.5,Aligned with EU
+Potassium Sorbate,Potassium Sorbate,Preservative,Antimicrobial,3.0,6.0,0.6,3.1,7,TRUE,TRUE,0.6,Most effective below pH 6,TRUE,,No restriction,TRUE,0.6,Aligned with EU
+Ascorbic Acid,Vitamin C,Active,Antioxidant/brightening,3.0,4.0,15,8.0,7,TRUE,TRUE,,Stable only below pH 4,TRUE,,No restriction,TRUE,,No restriction
+Niacinamide,Niacinamide,Active,Brightening/barrier support,5.0,7.0,10,7.5,8,TRUE,TRUE,,No restriction,TRUE,,No restriction,TRUE,,No restriction
+Retinol,Retinol,Active,Anti-aging (Vitamin A),5.5,6.5,1,120.0,4,FALSE,TRUE,0.3,0.3% face/leave-on; 0.05% body lotion (EU 2024/996 - effective Nov 2025),TRUE,,No FDA concentration cap; industry norm <=1%,TRUE,0.3,Recommended alignment with EU pending local rule
+Salicylic Acid,Salicylic Acid (BHA),Active,Exfoliant,3.0,4.0,2,6.0,6,TRUE,TRUE,2.0,Max 2% leave-on (3% specific uses),TRUE,2.0,OTC monograph varies by use,TRUE,2.0,Aligned with EU
+Benzoyl Peroxide,Benzoyl Peroxide,Active,Acne treatment,4.0,6.0,5,5.5,3,TRUE,FALSE,0.0,Not permitted in leave-on skin cosmetics (rinse-off/nail exceptions),TRUE,10.0,OTC drug monograph allows up to 10%,FALSE,0.0,Not permitted as cosmetic
+Hydroquinone,Hydroquinone,Active,Skin lightening,4.0,6.0,2,9.0,2,FALSE,FALSE,0.0,Prohibited in cosmetics (Annex II),TRUE,2.0,OTC up to 2%; higher by prescription,FALSE,0.0,Prohibited under BIS cosmetic rules
+Alpha-Arbutin,Alpha-Arbutin,Active,Skin lightening,4.0,6.0,2,45.0,5,FALSE,TRUE,2.0,Max 2% face cream; 0.5% body lotion (EU 2024/996),TRUE,,No specific FDA cap,TRUE,2.0,Recommended alignment with EU
+Tocopherol,Vitamin E,Antioxidant,Stabilizer/antioxidant,4.0,8.0,1,10.0,7,TRUE,TRUE,,No restriction,TRUE,,No restriction,TRUE,,No restriction
+Citric Acid,Citric Acid,pH Adjuster,Acidifier,,,5,1.5,9,TRUE,TRUE,,No restriction,TRUE,,No restriction,TRUE,,No restriction
+Sodium Hydroxide,Sodium Hydroxide,pH Adjuster,Alkalizer,,,2,0.8,8,TRUE,TRUE,,No restriction,TRUE,,No restriction,TRUE,,No restriction
+Triethanolamine,TEA,pH Adjuster,Alkalizer/neutralizer,,,2.5,2.9,3,TRUE,TRUE,2.5,Nitrosamine precursor - purity controlled,TRUE,,No restriction,TRUE,2.5,Aligned with EU
+Disodium EDTA,Disodium EDTA,Chelating Agent,Metal-ion chelator,4.0,9.0,0.2,4.5,3,FALSE,TRUE,,No restriction,TRUE,,No restriction,TRUE,,No restriction
+Allantoin,Allantoin,Active,Soothing/healing,4.0,8.0,2,12.0,8,TRUE,TRUE,,No restriction,TRUE,,No restriction,TRUE,,No restriction
+Panthenol,Panthenol (Pro-Vitamin B5),Active,Soothing/moisturizing,4.0,8.0,5,9.0,8,TRUE,TRUE,,No restriction,TRUE,,No restriction,TRUE,,No restriction
+Sodium Hyaluronate,Hyaluronic Acid,Active,Hydration,4.0,8.0,2,180.0,8,TRUE,TRUE,,No restriction,TRUE,,No restriction,TRUE,,No restriction
+Squalane,Squalane,Emollient,Skin-conditioning oil,4.0,9.0,10,15.0,7,TRUE,TRUE,,No restriction,TRUE,,No restriction,TRUE,,No restriction
+Jojoba Oil,Jojoba Oil,Emollient,Skin-conditioning oil,4.0,9.0,15,9.0,9,TRUE,TRUE,,No restriction,TRUE,,No restriction,TRUE,,No restriction
+Butyrospermum Parkii Butter,Shea Butter,Emollient,Rich moisturizer,4.0,9.0,15,7.0,8,TRUE,TRUE,,No restriction,TRUE,,No restriction,TRUE,,No restriction
+Coco-Caprylate,Coco-Caprylate,Emollient,Lightweight silicone alternative,4.0,9.0,10,8.5,7,TRUE,TRUE,,No restriction,TRUE,,No restriction,TRUE,,No restriction
+Parfum,Fragrance,Fragrance,Scenting agent,,,1,20.0,2,FALSE,TRUE,,Must declare 26 allergens if present,TRUE,,No restriction,TRUE,,Must declare allergens per BIS
+Titanium Dioxide,Titanium Dioxide,Active,UV filter/pigment,,,25,7.5,3,FALSE,TRUE,25.0,Not for use in products that can lead to lung exposure (powder/spray forms restricted),TRUE,25.0,Sunscreen monograph,TRUE,25.0,Aligned with EU
+Zinc Oxide,Zinc Oxide,Active,UV filter/pigment,,,25,6.0,4,FALSE,TRUE,25.0,Not for use in products that can lead to lung exposure (powder/spray forms restricted),TRUE,25.0,Sunscreen monograph,TRUE,25.0,Aligned with EU

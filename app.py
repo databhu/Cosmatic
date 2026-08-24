@@ -10,7 +10,7 @@ from PIL import Image
 
 load_dotenv()  # picks up a local .env file if present; no-op if it doesn't exist
 
-from utils.groq_client import call_groq, GroqError, GroqRateLimitError, AVAILABLE_MODELS
+from utils.groq_client import call_groq, GroqError, GroqRateLimitError, AVAILABLE_MODELS, PROVIDERS, make_call_fn
 from utils.property_estimator import estimate_ph, estimate_viscosity, estimate_stability
 from utils.compatibility_checker import check_compatibility, sort_flags
 from utils.regulatory_checker import check_regulatory, summarize, REGIONS
@@ -24,6 +24,7 @@ from utils.formula_ai import (
     validate_and_normalize, FormulaGenerationError,
 )
 from utils.currency import CURRENCY_OPTIONS, currency_label, format_money
+from utils.technical_profile import compute_technical_profile, render_technical_description
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ASSETS_DIR = os.path.join(BASE_DIR, "assets")
@@ -42,10 +43,14 @@ st.set_page_config(page_title="CosmoGen | AI Cosmetic Formulation Studio", page_
 
 
 @st.cache_data
-def _load_icon_base64():
-    """Base64-encode the icon once so it can be embedded directly in the hero banner HTML."""
+def _load_logo_base64():
+    """Base64-encode the CosmoGen icon+wordmark lockup once so it can be
+    embedded directly in the hero banner HTML. This is the actual provided
+    logo artwork (cropped to the icon+wordmark, since the baked-in tagline
+    text is too thin to stay legible at hero-banner scale - a separately
+    rendered tagline sits next to it instead, see the hero banner markup)."""
     try:
-        with open(os.path.join(ASSETS_DIR, "cosmogen_icon.png"), "rb") as f:
+        with open(os.path.join(ASSETS_DIR, "cosmogen_wordmark.png"), "rb") as f:
             return base64.b64encode(f.read()).decode("utf-8")
     except Exception:
         return None
@@ -114,18 +119,13 @@ h1, h2, h3 { font-family: 'Poppins', sans-serif !important; font-weight: 700 !im
 
 .hero-banner {
     background: linear-gradient(135deg, #05061c 0%, #0d1250 55%, #1a1345 100%);
-    padding: 1.9rem 2.4rem; border-radius: 20px; margin-bottom: 1.4rem;
+    padding: 1.5rem 2.4rem; border-radius: 20px; margin-bottom: 1.4rem;
     box-shadow: 0 10px 30px rgba(13, 18, 80, 0.35);
-    display: flex; align-items: center; gap: 1.3rem;
+    display: flex; align-items: center; gap: 1.6rem;
 }
-.hero-banner img.hero-icon { height: 64px; width: 64px; border-radius: 16px; flex-shrink: 0; }
-.hero-title-group h1 {
-    background: linear-gradient(90deg, #ffffff 0%, #c9b8ff 35%, #8154FC 65%, #4ADAFD 100%);
-    -webkit-background-clip: text; background-clip: text; color: transparent;
-    font-size: 2.1rem; margin: 0; letter-spacing: .2px; line-height: 1.15;
-}
-.hero-title-group .hero-tagline { color: #9fa8d9; font-size: 0.8rem; letter-spacing: 2px;
-    text-transform: uppercase; margin: 0.15rem 0 0.4rem 0; font-weight: 600; }
+.hero-banner img.hero-logo { height: 100px; flex-shrink: 0; }
+.hero-title-group .hero-tagline { color: #9fa8d9; font-size: 0.85rem; letter-spacing: 2px;
+    text-transform: uppercase; margin: 0 0 0.5rem 0; font-weight: 600; }
 .hero-title-group p.hero-sub { color: #b9c2ea; font-size: 0.95rem; margin: 0; }
 
 .stButton > button {
@@ -271,65 +271,109 @@ def get_candidate_df(source_strategy: str, fx_rate: float = 1.0):
 
 def make_status_retry_callback(status_obj, base_label):
     """Feeds live rate-limit/retry progress into a st.status() box instead of
-    the user just seeing a frozen spinner during a 429 backoff."""
+    the user just seeing a frozen spinner during a 429 backoff. `reason`
+    already includes the provider name (e.g. "Groq rate limit")."""
     def _on_retry(attempt, max_attempts, wait_seconds, reason):
-        status_obj.update(label=f"{base_label} — Groq {reason}, retrying in {wait_seconds:.0f}s (attempt {attempt}/{max_attempts})...")
+        status_obj.update(label=f"{base_label} — {reason}, retrying in {wait_seconds:.0f}s (attempt {attempt}/{max_attempts})...")
     return _on_retry
 
 
+def make_status_fallback_callback(status_obj, base_label):
+    """Feeds a live 'switching providers' message into a st.status() box when
+    the primary provider fails and the app moves to the next one in the chain."""
+    def _on_fallback(from_provider, to_provider, reason):
+        status_obj.update(label=f"{base_label} — {from_provider} unavailable, switching to {to_provider}...")
+    return _on_fallback
+
+
 # --------------------------------------------------------------------------
-# Sidebar - AI provider config, currency, region, batch size
+# Sidebar - AI provider config (multi-provider with fallback), currency, region, batch size
 # --------------------------------------------------------------------------
-def get_default_groq_key():
-    """Resolve a default Groq key with this priority:
+def get_default_provider_key(key_env_var: str) -> str:
+    """Resolve a default API key for a given env var name with this priority:
     1. st.secrets (Streamlit Community Cloud's Settings -> Secrets)
-    2. GROQ_API_KEY environment variable (from a local .env file via python-dotenv, or the shell)
+    2. environment variable (from a local .env file via python-dotenv, or the shell)
     3. empty string (user pastes one into the sidebar manually)
     """
     try:
-        secret_val = st.secrets.get("GROQ_API_KEY", "")
+        secret_val = st.secrets.get(key_env_var, "")
         if secret_val:
             return secret_val
     except Exception:
         pass
-    return os.environ.get("GROQ_API_KEY", "")
+    return os.environ.get(key_env_var, "")
 
 
-def get_default_groq_model():
-    env_model = os.environ.get("GROQ_MODEL", "")
-    if env_model in AVAILABLE_MODELS:
-        return AVAILABLE_MODELS.index(env_model)
+def get_default_model_index(models: list, model_env_var: str) -> int:
+    env_model = os.environ.get(model_env_var, "")
+    if env_model in models:
+        return models.index(env_model)
     return 0
+
+
+def render_provider_key_input(provider_name: str, key_env_var: str) -> str:
+    """Same 'never show a configured secret' pattern as before, now reusable
+    per-provider. Returns the resolved key (empty string if none configured/entered)."""
+    default_key = get_default_provider_key(key_env_var)
+    if default_key:
+        st.success("✅ Configured (via Secrets/.env)")
+        use_override = st.checkbox("Use a different key for this session", key=f"{provider_name}_override_checkbox")
+        if use_override:
+            override_key = st.text_input(
+                f"Your {provider_name} API key", type="password", key=f"{provider_name}_override_key",
+                help="Overrides the configured key for this browser session only. Never written to disk.",
+            )
+            return override_key or default_key
+        return default_key
+    else:
+        st.caption(f"Not configured. Set `{key_env_var}` in Secrets/.env, or enter one below for this session only.")
+        return st.text_input(f"{provider_name} API key", type="password", key=f"{provider_name}_manual_key")
 
 
 with st.sidebar:
     st.header("⚙️ Settings")
 
-    _default_key = get_default_groq_key()
-    if _default_key:
-        st.success("✅ Groq API key is configured (via Secrets/.env).")
-        use_override = st.checkbox("Use a different key for this session")
-        if use_override:
-            _override_key = st.text_input(
-                "Your Groq API key", type="password", key="override_groq_key",
-                help="Overrides the configured key for this browser session only. Never written to disk.",
-            )
-            groq_api_key = _override_key or _default_key
-        else:
-            groq_api_key = _default_key
-    else:
-        st.warning("⚠️ No Groq API key configured.")
-        st.caption(
-            "Enter one below to enable AI features this session, or set `GROQ_API_KEY` via "
-            "Streamlit Secrets (hosted) or a local `.env` file so it's remembered automatically. "
-            "Get a free key at console.groq.com."
-        )
-        groq_api_key = st.text_input(
-            "Groq API key", type="password", key="manual_groq_key",
-            help="Used only for AI generation/narrative features - never for the deterministic regulatory or cost math.",
-        )
+    st.markdown("**AI Providers**")
+    st.caption("Configure one or both. With two configured, the app automatically switches to the second if the first hits a rate limit - so a single provider's quota doesn't block you.")
 
-    groq_model = st.selectbox("Groq model", AVAILABLE_MODELS, index=get_default_groq_model())
+    provider_keys = {}
+    provider_models = {}
+    for _pname, _pconfig in PROVIDERS.items():
+        with st.expander(_pname, expanded=(_pname == "Groq")):
+            provider_keys[_pname] = render_provider_key_input(_pname, _pconfig["key_env"])
+            model_env_var = _pconfig["key_env"].replace("_API_KEY", "_MODEL")
+            provider_models[_pname] = st.selectbox(
+                "Model", _pconfig["models"], index=get_default_model_index(_pconfig["models"], model_env_var),
+                key=f"{_pname}_model_select",
+            )
+            st.caption(f"{_pconfig['free_tier_note']} [Get a key]({_pconfig['signup_url']})")
+
+    configured_providers = [p for p in PROVIDERS if provider_keys[p]]
+    if len(configured_providers) >= 2:
+        primary_provider = st.selectbox("Primary provider", configured_providers, index=0)
+        enable_fallback = st.checkbox("Auto-fallback to the other provider if rate-limited", value=True)
+    elif len(configured_providers) == 1:
+        primary_provider = configured_providers[0]
+        enable_fallback = False
+        st.caption(f"Using {primary_provider} (configure a second provider above to enable automatic fallback).")
+    else:
+        primary_provider = None
+        enable_fallback = False
+        st.warning("⚠️ No AI provider configured - AI features are disabled until you add a key above.")
+
+    def build_provider_chain():
+        if not primary_provider:
+            return []
+        chain = [(primary_provider, provider_keys[primary_provider], provider_models[primary_provider])]
+        if enable_fallback:
+            for p in configured_providers:
+                if p != primary_provider:
+                    chain.append((p, provider_keys[p], provider_models[p]))
+        return chain
+
+    provider_chain = build_provider_chain()
+    ai_available = bool(provider_chain)
+
     st.divider()
 
     currency_code = st.selectbox(
@@ -364,16 +408,18 @@ def fmt(value, decimals=2):
     return format_money(value, currency_symbol, decimals)
 
 
-_icon_b64 = _load_icon_base64()
-_icon_img_tag = f'<img class="hero-icon" src="data:image/png;base64,{_icon_b64}" alt="CosmoGen logo">' if _icon_b64 else ""
+_logo_b64 = _load_logo_base64()
+if _logo_b64:
+    _logo_tag = f'<img class="hero-logo" src="data:image/png;base64,{_logo_b64}" alt="CosmoGen logo">'
+else:
+    _logo_tag = '<h1 style="color:#f7f3ff;font-size:2rem;margin:0;font-family:\'Poppins\',sans-serif;">CosmoGen</h1>'
 
 st.markdown(
     f"""
     <div class="hero-banner">
-        {_icon_img_tag}
+        {_logo_tag}
         <div class="hero-title-group">
             <p class="hero-tagline">AI Cosmetic Formulation Studio</p>
-            <h1>CosmoGen</h1>
             <p class="hero-sub">Formula Predictor · Property Estimator · Regulatory Rule Checker · Cost & Sustainability Calculator</p>
         </div>
     </div>
@@ -483,8 +529,8 @@ with tab_studio:
     generate_clicked = st.button("✨ Generate AI Formula", type="primary", width="content")
 
     if generate_clicked:
-        if not groq_api_key:
-            st.error("No Groq API key available. Add one in the sidebar, or configure Secrets/.env.")
+        if not ai_available:
+            st.error("No AI provider configured. Add a Groq or Google Gemini API key in the sidebar, or configure Secrets/.env.")
         elif not description.strip():
             st.error("Describe the desired product before generating.")
         else:
@@ -496,8 +542,9 @@ with tab_studio:
                     try:
                         candidate_ingredients = build_candidate_context(candidate_df)
                         incompat_rules = build_incompat_context(incompat_data)
+                        call_fn = make_call_fn(provider_chain, on_fallback=make_status_fallback_callback(status, "Formulating..."))
                         raw = generate_formula(
-                            groq_api_key, groq_model, product_category, product_subtype,
+                            call_fn, product_category, product_subtype,
                             description, positioning, source_strategy, candidate_ingredients, incompat_rules,
                             currency_code=currency_code, on_retry=make_status_retry_callback(status, "Formulating..."),
                         )
@@ -623,6 +670,46 @@ with tab_studio:
                 for i, r in enumerate(result["refinement_history"], 1):
                     st.write(f"{i}. {r}")
 
+        st.markdown("**🔬 Technical product profile**")
+        tech_profile = compute_technical_profile(r_flat_df, candidate_df, result["product_category"], result["product_subtype"])
+        tech_description = render_technical_description(tech_profile, result["product_category"], result["product_subtype"])
+        st.markdown(f'<div class="result-card">{tech_description}</div>', unsafe_allow_html=True)
+        st.caption("Computed directly from this formula's actual ingredients/percentages - not AI-generated, so it can't drift from what's really in the formula.")
+
+        with st.expander("📋 Full technical breakdown"):
+            tp1, tp2 = st.columns(2)
+            with tp1:
+                st.markdown("**Active ingredients**")
+                if tech_profile["active_ingredients"]:
+                    st.dataframe(pd.DataFrame(tech_profile["active_ingredients"]).rename(
+                        columns={"name": "Ingredient", "percent": "%", "function": "Function"}),
+                        width="stretch", hide_index=True)
+                else:
+                    st.caption("None")
+                st.markdown("**Preservation system**")
+                pres = tech_profile["preservation"]
+                if pres["preservatives"]:
+                    st.dataframe(pd.DataFrame(pres["preservatives"]).rename(columns={"name": "Ingredient", "percent": "%"}),
+                                  width="stretch", hide_index=True)
+                    st.caption(f"Combined: {pres['total_percent']:g}% · Antioxidant present: {'Yes' if pres['has_antioxidant'] else 'No'} · Chelator present: {'Yes' if pres['has_chelator'] else 'No'}")
+                else:
+                    st.caption("None detected")
+            with tp2:
+                st.markdown("**Emulsion / product type**")
+                st.write(tech_profile["emulsion_type"])
+                if tech_profile["uv_filter"]:
+                    st.markdown("**UV filter analysis**")
+                    uv = tech_profile["uv_filter"]
+                    if uv["filters"]:
+                        st.dataframe(pd.DataFrame(uv["filters"]).rename(columns={"name": "Filter", "percent": "%"}),
+                                      width="stretch", hide_index=True)
+                    st.write(f"**Total: {uv['total_percent']:g}%** — {uv['tier_label']}")
+                    st.warning(uv["disclaimer"])
+                st.markdown("**Functional ingredients**")
+                fi = tech_profile["functional_ingredients"]
+                st.caption(f"Emulsifiers: {', '.join(fi['emulsifiers']) or 'none'}")
+                st.caption(f"Thickeners: {', '.join(fi['thickeners']) or 'none'}")
+
         if meta["recommended_worldwide_upgrades"]:
             st.markdown("**✨ Recommended worldwide upgrades for this positioning**")
             up_cols = st.columns(len(meta["recommended_worldwide_upgrades"]))
@@ -674,8 +761,8 @@ with tab_studio:
             refine_clicked = st.button("🔁 Refine with AI", width="stretch")
 
         if refine_clicked:
-            if not groq_api_key:
-                st.error("No Groq API key available. Add one in the sidebar, or configure Secrets/.env.")
+            if not ai_available:
+                st.error("No AI provider configured. Add a Groq or Google Gemini API key in the sidebar, or configure Secrets/.env.")
             elif not refinement_instruction.strip():
                 st.error("Describe what should change before refining.")
             else:
@@ -684,8 +771,9 @@ with tab_studio:
                     try:
                         candidate_ingredients = build_candidate_context(refine_candidate_df)
                         incompat_rules = build_incompat_context(incompat_data)
+                        call_fn = make_call_fn(provider_chain, on_fallback=make_status_fallback_callback(status, "Refining..."))
                         raw = refine_formula(
-                            groq_api_key, groq_model, meta, phases, result["product_category"], result["product_subtype"],
+                            call_fn, meta, phases, result["product_category"], result["product_subtype"],
                             result["description"], result["positioning"], result["source_strategy"], refinement_instruction,
                             candidate_ingredients, incompat_rules, currency_code=currency_code,
                             prior_refinements=result.get("refinement_history", []),
@@ -925,6 +1013,13 @@ with tab_props:
 
         st.caption("Heuristic estimates for directional R&D use only - always confirm with a calibrated pH meter, viscometer, and a real stability protocol (accelerated aging, freeze-thaw, centrifuge).")
 
+        st.divider()
+        st.markdown("**🔬 Technical product profile**")
+        tech_profile = compute_technical_profile(fdf, working_df, "", "")
+        tech_description = render_technical_description(tech_profile, "", "")
+        st.markdown(f'<div class="result-card">{tech_description}</div>', unsafe_allow_html=True)
+        st.caption("Computed directly from this formula's actual ingredients/percentages.")
+
 # ==========================================================================
 # TAB: Regulatory
 # ==========================================================================
@@ -1031,11 +1126,11 @@ with tab_cost:
 # ==========================================================================
 with tab_ai:
     st.subheader("Ask the AI formulation assistant")
-    st.caption("Groq-powered narrative layer. It reasons over the numbers computed in the other tabs - it does not invent new regulatory limits.")
+    st.caption("AI-powered narrative layer. It reasons over the numbers computed in the other tabs - it does not invent new regulatory limits.")
     working_df = get_working_ingredients_df(fx_rate)
 
-    if not groq_api_key:
-        st.info("No Groq API key available. Add one in the sidebar, or configure Secrets/.env, to enable this tab.")
+    if not ai_available:
+        st.info("No AI provider configured. Add a Groq or Google Gemini API key in the sidebar, or configure Secrets/.env, to enable this tab.")
     elif not st.session_state.formula:
         st.info("Add ingredients in the Manual Builder or generate a formula in Formula Studio first.")
     else:
@@ -1071,7 +1166,8 @@ with tab_ai:
             )
             with st.status("Thinking...", expanded=False) as status:
                 try:
-                    reply = call_groq(groq_api_key, groq_model, prompt, on_retry=make_status_retry_callback(status, "Thinking..."))
+                    call_fn = make_call_fn(provider_chain, on_fallback=make_status_fallback_callback(status, "Thinking..."))
+                    reply = call_fn(prompt, on_retry=make_status_retry_callback(status, "Thinking..."))
                     status.update(label="Done", state="complete")
                     st.markdown(reply)
                 except GroqError as e:

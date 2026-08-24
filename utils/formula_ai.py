@@ -14,7 +14,7 @@ on top of whatever the AI proposed.
 import json
 import re
 
-from utils.groq_client import call_groq, GroqError
+from utils.groq_client import GroqError
 
 FORMULA_SYSTEM_PROMPT = """You are a senior cosmetic formulation chemist working inside an R&D tool.
 
@@ -93,6 +93,50 @@ def _strip_json_fences(text: str) -> str:
     return text.strip()
 
 
+def _extract_json_object(text: str) -> str:
+    """Real LLM output doesn't always perfectly follow 'respond with ONLY
+    JSON' instructions - models sometimes add a preamble ("Here's the
+    revised formula:"), a trailing note, or fence the JSON in the middle of
+    other text. This tries several increasingly permissive strategies
+    before giving up, since failing to parse a well-formed-but-wrapped
+    response is the most common real-world cause of generation/refinement
+    silently failing.
+    """
+    candidate = _strip_json_fences(text)
+
+    # Strategy 1: does it parse as-is?
+    try:
+        json.loads(candidate)
+        return candidate
+    except json.JSONDecodeError:
+        pass
+
+    # Strategy 2: pull out a ```json ... ``` fenced block from anywhere in the text
+    fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if fence_match:
+        try:
+            json.loads(fence_match.group(1))
+            return fence_match.group(1)
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 3: find the first '{' and the LAST '}' and try that whole span -
+    # handles a preamble/postamble wrapped around an otherwise-valid JSON object.
+    first_brace = text.find("{")
+    last_brace = text.rfind("}")
+    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+        span = text[first_brace:last_brace + 1]
+        try:
+            json.loads(span)
+            return span
+        except json.JSONDecodeError:
+            pass
+
+    # Give up - return the original cleaned candidate so the caller's own
+    # json.loads() raises the same error and can build a diagnostic message.
+    return candidate
+
+
 def build_candidate_context(working_df):
     """Trim the working ingredient dataframe down to only what the AI needs, to keep the prompt lean."""
     cols = ["inci_name", "category", "function", "cost_per_kg_usd", "source"]
@@ -167,38 +211,49 @@ def build_refinement_prompt(previous_meta, previous_phases, product_category, pr
     )
 
 
-def _call_and_parse_json(api_key, model, user_prompt, on_retry=None):
-    """Shared retry-on-malformed-JSON logic used by both generate_formula and refine_formula."""
+def _call_and_parse_json(call_fn, user_prompt, on_retry=None):
+    """Shared retry-on-malformed-JSON logic used by both generate_formula and refine_formula.
+    call_fn is a pre-configured callable (see groq_client.make_call_fn) that already
+    knows which provider(s)/key(s)/model to use and handles cross-provider fallback."""
     last_error = None
+    last_reply_preview = None
     for attempt in range(2):
+        reply = None
         try:
             prompt = user_prompt if attempt == 0 else (
                 user_prompt + "\n\nIMPORTANT: Your previous response was not valid JSON. "
                 "Respond with ONLY a single valid JSON object, no markdown fences, no extra text."
             )
-            reply = call_groq(api_key, model, prompt, temperature=0.3, system_override=FORMULA_SYSTEM_PROMPT, on_retry=on_retry)
-            cleaned = _strip_json_fences(reply)
+            reply = call_fn(prompt, temperature=0.3, system_override=FORMULA_SYSTEM_PROMPT, on_retry=on_retry)
+            cleaned = _extract_json_object(reply)
             data = json.loads(cleaned)
             return data
         except GroqError:
             raise
         except (json.JSONDecodeError, ValueError) as e:
             last_error = e
+            if reply:
+                last_reply_preview = reply[:300] + ("..." if len(reply) > 300 else "")
             continue
 
-    raise FormulaGenerationError(f"The AI didn't return valid formula data after retrying. Last error: {last_error}")
+    preview_note = f" The AI's raw response started with: \"{last_reply_preview}\"" if last_reply_preview else ""
+    raise FormulaGenerationError(
+        f"The AI's response couldn't be parsed as a formula after retrying ({last_error}).{preview_note} "
+        "This is usually a one-off formatting slip, not a real error - try clicking Generate/Refine again, "
+        "or try a different model in the sidebar if it keeps happening."
+    )
 
 
-def generate_formula(api_key, model, product_category, product_subtype, description, positioning,
+def generate_formula(call_fn, product_category, product_subtype, description, positioning,
                       source_strategy, candidate_ingredients, incompat_rules, currency_code="USD", on_retry=None):
-    """Call Groq (with retry on malformed JSON, plus rate-limit/transient-error retry inside
-    call_groq itself) and return the parsed raw dict for a brand-new formula."""
+    """Call the AI (with retry on malformed JSON, plus rate-limit/transient-error retry and
+    cross-provider fallback inside call_fn itself) and return the parsed raw dict for a brand-new formula."""
     user_prompt = build_user_prompt(product_category, product_subtype, description, positioning,
                                      source_strategy, candidate_ingredients, incompat_rules, currency_code)
-    return _call_and_parse_json(api_key, model, user_prompt, on_retry=on_retry)
+    return _call_and_parse_json(call_fn, user_prompt, on_retry=on_retry)
 
 
-def refine_formula(api_key, model, previous_meta, previous_phases, product_category, product_subtype,
+def refine_formula(call_fn, previous_meta, previous_phases, product_category, product_subtype,
                     description, positioning, source_strategy, refinement_instruction, candidate_ingredients,
                     incompat_rules, currency_code="USD", prior_refinements=None, on_retry=None):
     """Ask the AI to revise a previously-generated formula based on a refinement instruction,
@@ -208,7 +263,7 @@ def refine_formula(api_key, model, previous_meta, previous_phases, product_categ
         source_strategy, refinement_instruction, candidate_ingredients, incompat_rules, currency_code,
         prior_refinements,
     )
-    return _call_and_parse_json(api_key, model, user_prompt, on_retry=on_retry)
+    return _call_and_parse_json(call_fn, user_prompt, on_retry=on_retry)
 
 
 def validate_and_normalize(raw_formula: dict, candidate_names: set, worldwide_names: set):

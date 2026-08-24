@@ -26,52 +26,69 @@ Then open the local URL Streamlit prints (usually http://localhost:8501).
 The `.env` step is optional - skip it and you can still paste your key into
 the sidebar once the app is open.
 
-## Groq API key
+## AI providers (Groq + Google Gemini, with automatic fallback)
 
-You have three ways to give the app your key - use whichever fits how you're running it:
+The app supports two AI providers - **Groq** and **Google Gemini** - both
+with genuinely free tiers (no credit card required). Configure one or both
+in the sidebar; if both are configured, the app automatically switches to
+the second one if the first gets rate-limited, so a single provider's quota
+doesn't block you mid-session.
+
+**For each provider**, you have three ways to supply its key:
 
 **Option A - `.env` file (recommended for local dev)**
 ```bash
 cp .env.example .env
-# then edit .env and paste your key:
+# then edit .env and paste your key(s):
 # GROQ_API_KEY=gsk_...
+# GEMINI_API_KEY=AIza...
 ```
-Get a free key at https://console.groq.com. The app loads `.env` automatically
-via `python-dotenv` on startup and pre-fills the sidebar with it. `.env` is
-already in `.gitignore` - it will never get committed.
+Get a free Groq key at https://console.groq.com and a free Gemini key at
+https://aistudio.google.com/apikey. The app loads `.env` automatically via
+`python-dotenv` on startup. `.env` is already in `.gitignore` - it will
+never get committed.
 
-**Option B - paste it directly into the sidebar** each time you run the app
-(a password-type field, never written to disk).
+**Option B - paste directly into the sidebar** each time you run the app
+(a password-type field, never written to disk). Each provider has its own
+expander in the sidebar with its own key field.
 
 **Option C - Streamlit Community Cloud Secrets** (for the hosted version -
-see the deploy section below).
+see the deploy section below). Add both `GROQ_API_KEY` and `GEMINI_API_KEY`
+there if you want both providers available to visitors.
 
-Priority if more than one is set: **Streamlit Secrets > `.env`/environment
-variable > blank**. You can also optionally set `GROQ_MODEL` in `.env` to
-preselect a default model in the sidebar dropdown (must match one of the IDs
-in `utils/groq_client.py`'s `AVAILABLE_MODELS`).
+Priority per provider if more than one source is set: **Streamlit Secrets >
+`.env`/environment variable > blank**. You can also optionally set
+`GROQ_MODEL` / `GEMINI_MODEL` in `.env` to preselect a default model for
+each provider's dropdown (must match one of the IDs in `utils/groq_client.py`'s
+`PROVIDERS` dict).
 
-**The sidebar never displays a configured secret.** If `GROQ_API_KEY` is set
-via Secrets or `.env`, the sidebar just shows a "✅ configured" confirmation -
-never the key itself, even in a password field. A checkbox lets you type a
-*different* key for just that session if you want to (e.g. testing your own
-key against a shared deployment) without ever seeing or overwriting the
-configured one. If nothing is configured anywhere, the sidebar shows a clear
-warning explaining how to add one instead of silently failing later.
+**The sidebar never displays a configured secret.** If a provider's key is
+set via Secrets or `.env`, its expander just shows a "✅ Configured"
+confirmation - never the key itself, even in a password field. A checkbox
+lets you type a *different* key for just that session if you want to (e.g.
+testing your own key against a shared deployment) without ever seeing or
+overwriting the configured one. If nothing is configured for a provider,
+its expander shows a clear caption explaining how to add a key.
 
 Manual formula building, compatibility rules, property estimates, regulatory
-check, and cost calculator all work with **no API key at all**. The Groq key
-only unlocks Formula Studio's AI generation and the AI Assistant chat tab.
+check, and cost calculator all work with **no AI provider configured at
+all**. AI is only needed for Formula Studio's generation/refinement and the
+AI Assistant chat tab.
 
-### Rate limits and transient errors
+### Rate limits, transient errors, and fallback
 
-Every Groq call automatically retries on rate limits (HTTP 429) and transient
+Every AI call automatically retries on rate limits (HTTP 429) and transient
 server errors (500/502/503/504) or timeouts, using exponential backoff with
-jitter and honoring Groq's `Retry-After` header when it sends one (up to 4
-retries, capped at 20s between attempts). You'll see the status message
-update live (e.g. "retrying in 3s...") rather than a frozen spinner. If Groq
-is still rate-limiting after all retries, you get a clear one-line message
-telling you to wait and try again - never a raw stack trace.
+jitter and honoring a provider's `Retry-After` header when it sends one (up
+to 4 retries, capped at 20s between attempts). You'll see the status message
+update live (e.g. "retrying in 3s...") rather than a frozen spinner.
+
+If a provider is *still* rate-limited after exhausting its own retries, and
+you've configured a second provider with "Auto-fallback" enabled, the app
+automatically tries the next provider in the chain - you'll see a status
+message like "Groq unavailable, switching to Google Gemini..." If every
+configured provider fails, you get one clear error message, never a raw
+stack trace.
 
 ## Formula Studio walkthrough
 
@@ -125,6 +142,18 @@ telling you to wait and try again - never a raw stack trace.
   history. **Start over (new formula)** clears everything, including version
   history, for a genuinely fresh attempt.
 
+**Technical product profile** - every generated formula includes a technical
+breakdown computed straight from the formula's real ingredients/percentages:
+active ingredients, emulsion/product type, preservation system, and (for
+sunscreens, or any formula containing mineral UV filters) combined UV filter
+loading. This is deliberately **not** AI-generated - SPF is a regulated,
+lab-tested claim (FDA OTC monograph / ISO 24444), so rather than let an AI
+guess a plausible-sounding number, the app reports the real UV filter
+percentage and maps it to a heavily-caveated directional tier ("in the range
+commonly used for ~SPF 30 mineral formulations") with a loud disclaimer that
+it is not a substitute for actual testing. The same technical profile also
+appears in the Properties tab for manually-built formulas.
+
 ## Currency
 
 Pick a currency in the sidebar (USD, EUR, GBP, INR, JPY, AUD, CAD, CNY, AED).
@@ -142,17 +171,18 @@ Builder, Cost & Sustainability, unit economics, and the Excel export.
 ```
 app.py                        Streamlit UI - Formula Studio + 6 supporting tabs
 assets/cosmogen_favicon.png    Browser-tab favicon (64x64)
-assets/cosmogen_icon.png       App icon used in the hero banner (512x512)
-assets/cosmogen_wordmark.png   Full logo lockup (icon + wordmark + tagline) -
-                                kept as a brand asset; not rendered in-app since
-                                the in-app title uses CSS gradient text instead
-                                (see "Branding" below)
+assets/cosmogen_icon.png       Square icon at higher resolution (512x512) -
+                                spare brand asset, not currently rendered
+                                in-app (the favicon uses a smaller copy)
+assets/cosmogen_wordmark.png   Icon + "CosmoGen" wordmark, cropped from the
+                                original lockup - embedded in the hero banner
 data/ingredients.csv           ~45 worldwide cosmetic ingredients: category,
                                 cost/kg (USD), sustainability score, typical pH
                                 range, and EU/US/India allowed status + limits
 data/incompatibilities.json    Known ingredient-pair interaction rules
-utils/groq_client.py           Groq chat-completions wrapper: retry/backoff
-                                on rate limits & transient errors
+utils/groq_client.py           Multi-provider AI client (Groq + Google Gemini):
+                                retry/backoff on rate limits & transient errors,
+                                automatic cross-provider fallback
 utils/formula_ai.py            AI formula generation + refinement: prompt
                                 building, strict JSON validation, hallucination
                                 filtering, percentage renormalization
@@ -163,21 +193,33 @@ utils/property_estimator.py    Deterministic pH / viscosity / stability heuristi
 utils/compatibility_checker.py Rule-based pairwise incompatibility lookup
 utils/regulatory_checker.py    Region-by-region allowed/limit checking
 utils/cost_calculator.py       Batch costing, unit economics, substitute finder
+utils/technical_profile.py     Deterministic technical product profile (active
+                                ingredients, UV filter analysis, emulsion type,
+                                preservation system) - no AI involved
 ```
 
 ## Branding
 
 The app's palette is sampled directly from the CosmoGen logo: a purple→cyan
 gradient (`#8154FC` → `#4ADAFD`) on a deep navy background (`#05061C` →
-`#0D1250`). The square icon (`assets/cosmogen_icon.png`) is used as both the
-browser favicon and the mark in the hero banner; the "CosmoGen" wordmark
-itself is rendered as CSS gradient-fill text rather than an embedded image -
-the original horizontal lockup has "Cosmo" in near-white, designed to sit on
-a dark surface, so recreating it in CSS keeps it crisp and legible at any
-size rather than depending on a raster image's fixed proportions. To swap in
-different brand colors later, edit the `CUSTOM_CSS` block near the top of
-`app.py` (the gradient stops are called out in a comment) and the icon files
-in `assets/`.
+`#0D1250`). Two assets from the actual provided artwork are used:
+
+- `assets/cosmogen_favicon.png` (the square icon) - browser-tab favicon.
+- `assets/cosmogen_wordmark.png` (icon + "CosmoGen" text, cropped from the
+  original lockup) - embedded directly in the hero banner. "Cosmo" is
+  rendered in near-white in the source art, designed to sit on a dark
+  surface, which is why it's placed on the hero banner's dark navy
+  background rather than anywhere with a light background.
+- The lockup's own baked-in tagline text was excluded from the crop (too
+  thin to stay legible at hero-banner scale) - the tagline shown next to the
+  logo ("AI Cosmetic Formulation Studio") is separately rendered text
+  instead, sized for readability.
+
+If the `assets/` folder is ever missing (e.g. accidentally left out of a
+deploy), the app falls back to a plain "CosmoGen" text heading rather than
+breaking. To swap in different brand assets later, replace the PNGs in
+`assets/` and adjust the gradient stops in the `CUSTOM_CSS` block near the
+top of `app.py` (commented) to match.
 
 
 ### Design principle: AI proposes, the app disposes
@@ -269,17 +311,19 @@ qualified regulatory affairs review.
 4. It builds `requirements.txt` automatically and gives you a public URL like
    `https://<something>.streamlit.app`.
 
-**Optional - bake in a shared Groq key** so visitors don't need their own:
-in the app's Streamlit Cloud dashboard go to **Settings → Secrets** and add:
+**Optional - bake in shared keys** so visitors don't need their own:
+in the app's Streamlit Cloud dashboard go to **Settings → Secrets** and add
+either or both:
 ```toml
 GROQ_API_KEY = "gsk_..."
+GEMINI_API_KEY = "AIza..."
 ```
-`app.py` already checks `st.secrets` for this and pre-fills the sidebar field
-with it if present (visitors can still override it with their own key).
-Without this, each visitor just pastes their own key in the sidebar - nothing
-is stored server-side either way. Note that `.env` is a local-only mechanism
-(it's gitignored, so it never reaches GitHub or Streamlit Cloud) - on Cloud,
-Secrets is the equivalent.
+`app.py` already checks `st.secrets` for these and shows a "✅ Configured"
+confirmation for each provider (visitors can still override with their own
+key via the checkbox). Without this, each visitor just pastes their own
+key(s) in the sidebar - nothing is stored server-side either way. Note that
+`.env` is a local-only mechanism (it's gitignored, so it never reaches
+GitHub or Streamlit Cloud) - on Cloud, Secrets is the equivalent.
 
 **Note on public hosting**: since the app is public, anyone with the URL can
 use it (and, if you set a shared secret key, can spend your Groq quota via

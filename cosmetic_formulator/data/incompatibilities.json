@@ -1,0 +1,86 @@
+{
+  "pair_rules": [
+    {
+      "a": "Ascorbic Acid",
+      "b": "Niacinamide",
+      "severity": "low",
+      "reason": "Historically flagged as incompatible, but modern evidence shows the reaction is minor and mostly a non-issue at typical use pH and concentrations. Formulating at low pH (<5) minimizes any risk."
+    },
+    {
+      "a": "Retinol",
+      "b": "Ascorbic Acid",
+      "severity": "medium",
+      "reason": "Retinol prefers near-neutral pH (5.5-6.5) while Ascorbic Acid needs low pH (<4) to stay active. Combining in one phase forces a pH compromise that degrades one or both actives."
+    },
+    {
+      "a": "Retinol",
+      "b": "Benzoyl Peroxide",
+      "severity": "high",
+      "reason": "Benzoyl Peroxide oxidizes and deactivates Retinol on contact. Do not combine in the same formula or phase."
+    },
+    {
+      "a": "Retinol",
+      "b": "Salicylic Acid",
+      "severity": "medium",
+      "reason": "Both are active exfoliants/actives that increase irritation risk when combined at high concentration; also compete for the same mildly acidic pH window, increasing the chance of barrier disruption."
+    },
+    {
+      "a": "Ascorbic Acid",
+      "b": "Salicylic Acid",
+      "severity": "low",
+      "reason": "Both perform best at low pH so they are chemically compatible, but combined acidity can raise irritation risk on sensitive skin."
+    },
+    {
+      "a": "Sodium Lauryl Sulfate",
+      "b": "Cocamidopropyl Betaine",
+      "severity": "none",
+      "reason": "Common, well-established surfactant pairing; CAPB moderates SLS irritation."
+    },
+    {
+      "a": "Carbomer",
+      "b": "Cetearyl Alcohol",
+      "severity": "low",
+      "reason": "Carbomer gels can be destabilized by electrolytes and by high levels of fatty alcohols if not properly neutralized and phased; use correct mixing order."
+    },
+    {
+      "a": "Carbomer",
+      "b": "Sodium Hydroxide",
+      "severity": "none",
+      "reason": "Standard neutralization pair; Sodium Hydroxide is commonly used to neutralize Carbomer into a clear gel."
+    },
+    {
+      "a": "Disodium EDTA",
+      "b": "Titanium Dioxide",
+      "severity": "low",
+      "reason": "Chelators can interact with mineral UV filter surface coatings in some formulations; verify with the specific coated grade used."
+    },
+    {
+      "a": "Triethanolamine",
+      "b": "Stearic Acid",
+      "severity": "none",
+      "reason": "Classic soap-type emulsification pair (TEA-stearate), well characterized in traditional lotion formulation."
+    },
+    {
+      "a": "Phenoxyethanol",
+      "b": "Ethylhexylglycerin",
+      "severity": "none",
+      "reason": "Standard, widely used preservative-booster combination that broadens the antimicrobial spectrum."
+    },
+    {
+      "a": "Hydroquinone",
+      "b": "Ascorbic Acid",
+      "severity": "medium",
+      "reason": "Both are oxidation-prone; combining can accelerate discoloration/degradation of the formula unless well antioxidant-stabilized."
+    }
+  ],
+  "category_rules": [
+    {
+      "a_category": "Surfactant",
+      "a_charge": "anionic",
+      "b_category": "Surfactant",
+      "b_charge": "cationic",
+      "severity": "high",
+      "reason": "Anionic and cationic surfactants generally precipitate out of solution when combined, causing instability, haze, or loss of function."
+    }
+  ]
+}

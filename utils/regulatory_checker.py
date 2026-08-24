@@ -12,6 +12,8 @@ with a verified feed from the official sources:
   India: BIS cosmetic standards / CDSCO
 """
 
+import pandas as pd
+
 REGIONS = {
     "EU": {"allowed_col": "eu_allowed", "max_col": "eu_max_percent", "notes_col": "eu_notes"},
     "US": {"allowed_col": "us_allowed", "max_col": "us_max_percent", "notes_col": "us_notes"},
@@ -40,6 +42,17 @@ def check_regulatory(formula_df, ingredients_df, region: str):
         notes = info[cols["notes_col"]]
         pct = float(row["percent"])
 
+        allowed_is_blank = pd.isna(allowed) or str(allowed).strip() == ""
+        if allowed_is_blank:
+            source_note = " (likely an in-house/custom material with no regulatory data on file)" if "source" in info.index and info.get("source") == "In-House" else ""
+            results.append({
+                "inci_name": row["inci_name"],
+                "percent": pct,
+                "status": "unknown",
+                "message": f"No {region} regulatory data on file for this material{source_note} - verify manually.",
+            })
+            continue
+
         if allowed is False or str(allowed).strip().upper() == "FALSE":
             results.append({
                 "inci_name": row["inci_name"],
@@ -49,7 +62,7 @@ def check_regulatory(formula_df, ingredients_df, region: str):
             })
             continue
 
-        if max_pct not in (None, "") and not (isinstance(max_pct, float) and str(max_pct) == "nan"):
+        if not pd.isna(max_pct) and max_pct not in (None, ""):
             try:
                 max_pct_f = float(max_pct)
                 if pct > max_pct_f:

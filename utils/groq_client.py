@@ -70,6 +70,14 @@ PROVIDERS = {
     },
 }
 
+# Models known to autonomously use tools like live web search as part of
+# generating a response (no special "tools" parameter needed in the request -
+# these decide for themselves when a query would benefit from a live search).
+# Used to gate the "search worldwide ingredients" feature to models that can
+# actually do it, and to skip it gracefully (falling back to the static
+# database) for models that can't.
+WEB_SEARCH_CAPABLE_MODELS = {"groq/compound", "groq/compound-mini"}
+
 # Kept for backward compatibility - existing code that imports AVAILABLE_MODELS
 # gets Groq's list specifically.
 AVAILABLE_MODELS = PROVIDERS["Groq"]["models"]
@@ -111,6 +119,22 @@ class GroqRateLimitError(GroqError):
     """Raised specifically when a provider is still rate-limiting after all
     retries - lets callers (e.g. the fallback chain) detect this case
     specifically vs. other failures like a bad key."""
+    pass
+
+
+class GroqAuthError(GroqError):
+    """Raised for 401/403 - an invalid/rejected API key. Distinguishing this
+    from other errors lets the fallback chain skip straight to the next
+    PROVIDER (retrying other models with the same bad key would just fail
+    the same way every time) instead of wasting attempts on sibling models."""
+    pass
+
+
+class GroqModelNotFoundError(GroqError):
+    """Raised for 404 - the model ID doesn't exist / has been deprecated.
+    Distinguishing this lets the fallback chain try a sibling model on the
+    SAME provider first (the provider itself is fine, just that one model
+    ID is stale) before falling back to a different provider entirely."""
     pass
 
 
@@ -187,10 +211,10 @@ def call_llm(provider: str, api_key: str, model: str, user_message: str, tempera
                 raise GroqError(f"Unexpected {provider} response shape: {data}")
 
         if resp.status_code == 401 or resp.status_code == 403:
-            raise GroqError(f"{provider} rejected the API key (HTTP {resp.status_code}). Double-check the key in the sidebar or your Secrets/.env.")
+            raise GroqAuthError(f"{provider} rejected the API key (HTTP {resp.status_code}). Double-check the key in the sidebar or your Secrets/.env.")
 
         if resp.status_code == 404:
-            raise GroqError(f"Model \"{model}\" was not found on {provider} (404) - it may have been deprecated. Try a different model from the dropdown.")
+            raise GroqModelNotFoundError(f"Model \"{model}\" was not found on {provider} (404) - it may have been deprecated. Trying an alternate model automatically.")
 
         if resp.status_code in RETRYABLE_STATUS_CODES:
             retry_after = _parse_retry_after(resp)
@@ -226,31 +250,55 @@ def call_groq(api_key: str, model: str, user_message: str, temperature: float = 
 def call_with_fallback(provider_chain, user_message: str, temperature: float = 0.4,
                         system_override: str = None, on_retry=None, on_fallback=None) -> str:
     """
-    Try providers in priority order, falling back to the next one if the
-    current one fails (rate limit, missing key, bad key, etc.) - this is
-    what actually prevents a single provider's rate limit from blocking the
-    user, rather than just retrying the same provider harder.
+    Try providers in priority order, and within each provider, try the
+    user's selected model first, then automatically try that provider's
+    other models before moving on - this is what actually prevents a single
+    deprecated/overloaded model OR a single provider's rate limit from
+    blocking the user, rather than just retrying the same exact call harder.
 
     provider_chain: list of (provider_name, api_key, model) tuples, in the
                      order they should be tried. Entries with no api_key are
                      skipped (not counted as a real attempt).
-    on_fallback: optional callback(from_provider, to_provider, reason) fired
-                 right before switching to the next provider, for live UI feedback.
+    on_fallback: optional callback(from_label, to_label, reason) fired right
+                 before switching to the next attempt, for live UI feedback.
+                 Labels look like "Groq (openai/gpt-oss-120b)".
     """
     usable_chain = [(p, k, m) for (p, k, m) in provider_chain if k]
     if not usable_chain:
         raise GroqError("No AI provider is configured - add at least one API key in the sidebar.")
 
+    # Build the full flat attempt list: for each provider, the user's selected
+    # model first, then that provider's other models as automatic sibling
+    # fallbacks, before moving on to the next provider in the chain.
+    attempts = []
+    for provider_name, api_key, selected_model in usable_chain:
+        models_to_try = [selected_model] + [
+            m for m in PROVIDERS.get(provider_name, {}).get("models", []) if m != selected_model
+        ]
+        for model in models_to_try:
+            attempts.append((provider_name, api_key, model))
+
     last_error = None
-    for i, (provider_name, api_key, model) in enumerate(usable_chain):
+    skip_provider = None  # set after an auth error - same bad key would fail identically for every sibling model
+
+    for i, (provider_name, api_key, model) in enumerate(attempts):
+        if provider_name == skip_provider:
+            continue
+        label = f"{provider_name} ({model})"
         try:
             return call_llm(provider_name, api_key, model, user_message, temperature, system_override, on_retry)
+        except GroqAuthError as e:
+            last_error = e
+            skip_provider = provider_name
+            continue
         except GroqError as e:
             last_error = e
-            if i < len(usable_chain) - 1:
-                next_provider = usable_chain[i + 1][0]
-                if on_fallback:
-                    on_fallback(provider_name, next_provider, str(e))
+            next_label = next(
+                (f"{p} ({m})" for p, _, m in attempts[i + 1:] if p != skip_provider),
+                None,
+            )
+            if on_fallback and next_label:
+                on_fallback(label, next_label, str(e))
             continue
 
     raise last_error

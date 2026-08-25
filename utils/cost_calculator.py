@@ -91,12 +91,41 @@ def batch_size_from_units(units_desired: int, unit_fill_g: float) -> float:
     return (units_desired * unit_fill_g) / 1000.0
 
 
+def _safe_float(value, default=None):
+    """Safely convert a value to float, returning `default` (None unless
+    given) for None, NaN, pandas NA, empty string, or anything else that
+    can't be parsed - never raises. Cost and sustainability data is
+    frequently missing for in-house or AI-selected worldwide ingredients,
+    so every place that reads these fields should go through this rather
+    than calling float() directly."""
+    if value is None:
+        return default
+    try:
+        if pd.isna(value):
+            return default
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, str) and value.strip() == "":
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def find_substitutes(ingredient_name: str, ingredients_df: pd.DataFrame, max_results: int = 5):
     """
     Find ingredients that serve the same specific formulation function
     (e.g. "Primary emulsifier", "Antimicrobial", "UV filter/pigment") and are
     cheaper and/or more sustainable than the given ingredient, as swap
     candidates.
+
+    Cost/sustainability data is commonly missing (None/NaN/blank) for
+    in-house materials and AI-selected worldwide ingredients - this never
+    crashes on that. A candidate missing a value just can't be ranked or
+    compared on that specific dimension (shown as None, not a fabricated
+    number), and still appears in the results based on the function match
+    alone rather than being silently dropped.
     """
     info = ingredients_df[ingredients_df["inci_name"] == ingredient_name]
     if info.empty:
@@ -108,8 +137,8 @@ def find_substitutes(ingredient_name: str, ingredients_df: pd.DataFrame, max_res
     # different jobs) - function is specific enough to only surface
     # ingredients that actually serve the same formulation purpose.
     function = info["function"]
-    current_cost = float(info["cost_per_kg_usd"])
-    current_sustain = float(info["sustainability_score"])
+    current_cost = _safe_float(info.get("cost_per_kg_usd") if hasattr(info, "get") else info["cost_per_kg_usd"])
+    current_sustain = _safe_float(info.get("sustainability_score") if hasattr(info, "get") else info["sustainability_score"])
 
     candidates = ingredients_df[
         (ingredients_df["function"] == function) &
@@ -119,23 +148,30 @@ def find_substitutes(ingredient_name: str, ingredients_df: pd.DataFrame, max_res
     if candidates.empty:
         return []
 
-    candidates["cost_delta_usd_per_kg"] = current_cost - candidates["cost_per_kg_usd"].astype(float)
-    candidates["sustainability_delta"] = candidates["sustainability_score"].astype(float) - current_sustain
-
-    # Rank: prioritize ingredients that are both cheaper AND at least as sustainable,
-    # then fall back to cheaper-only, then more-sustainable-only.
-    candidates = candidates.sort_values(
-        by=["cost_delta_usd_per_kg", "sustainability_delta"],
-        ascending=[False, False],
-    )
-
     results = []
-    for _, row in candidates.head(max_results).iterrows():
+    for _, row in candidates.iterrows():
+        cand_cost = _safe_float(row.get("cost_per_kg_usd"))
+        cand_sustain = _safe_float(row.get("sustainability_score"))
+
+        cost_delta = (current_cost - cand_cost) if (current_cost is not None and cand_cost is not None) else None
+        sustain_delta = (cand_sustain - current_sustain) if (current_sustain is not None and cand_sustain is not None) else None
+
         results.append({
             "inci_name": row["inci_name"],
-            "cost_per_kg_usd": float(row["cost_per_kg_usd"]),
-            "cost_delta_usd_per_kg": round(float(row["cost_delta_usd_per_kg"]), 2),
-            "sustainability_score": float(row["sustainability_score"]),
-            "sustainability_delta": round(float(row["sustainability_delta"]), 1),
+            "cost_per_kg_usd": cand_cost,
+            "cost_delta_usd_per_kg": round(cost_delta, 2) if cost_delta is not None else None,
+            "sustainability_score": cand_sustain,
+            "sustainability_delta": round(sustain_delta, 1) if sustain_delta is not None else None,
         })
-    return results
+
+    # Rank: prioritize ingredients that are both cheaper AND at least as
+    # sustainable, then cheaper-only, then more-sustainable-only. A missing
+    # delta (unknown improvement) sorts to the bottom of its tier rather
+    # than being treated as an improvement by accident.
+    def _sort_key(r):
+        cost_rank = r["cost_delta_usd_per_kg"] if r["cost_delta_usd_per_kg"] is not None else float("-inf")
+        sustain_rank = r["sustainability_delta"] if r["sustainability_delta"] is not None else float("-inf")
+        return (-cost_rank, -sustain_rank)
+
+    results.sort(key=_sort_key)
+    return results[:max_results]

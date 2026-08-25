@@ -28,15 +28,6 @@ UV_TIER_THRESHOLDS = [
     (25.0, "In the range commonly used for higher SPF (~SPF 50) mineral formulations"),
 ]
 
-SPF_DISCLAIMER = (
-    "This is NOT an SPF value and must never be used as one. SPF is a regulated, tested "
-    "claim (FDA OTC sunscreen monograph in the US; ISO 24444 in vitro/in vivo testing "
-    "elsewhere) - it depends on filter grade, particle size/coating, film formation, and "
-    "photostability, none of which can be determined from a percentage alone. This is a "
-    "directional formulation-range reference only; any SPF claim requires standardized lab "
-    "testing before labeling or sale."
-)
-
 
 def _is_uv_filter(function_text) -> bool:
     if not isinstance(function_text, str):
@@ -48,7 +39,7 @@ def compute_technical_profile(formula_df, ingredients_df, product_category: str 
     """
     Returns a dict of deterministic, formula-grounded technical facts:
       - active_ingredients: [{name, percent, function}]
-      - uv_filter: None, or {total_percent, filters: [{name, percent}], tier_label, disclaimer}
+      - uv_filter: None, or {total_percent, filters: [{name, percent}], tier_label}
       - emulsion_type: str
       - preservation: {preservatives: [{name, percent}], total_percent, has_antioxidant, has_chelator}
       - functional_ingredients: {emulsifiers: [...], thickeners: [...]}
@@ -111,7 +102,6 @@ def compute_technical_profile(formula_df, ingredients_df, product_category: str 
             "total_percent": total_pct,
             "filters": uv_filters,
             "tier_label": tier_label,
-            "disclaimer": SPF_DISCLAIMER,
         }
 
     if has_water and has_oil and emulsifiers:
@@ -166,7 +156,6 @@ def render_technical_description(profile: dict, product_category: str, product_s
         sentences.append(
             f"Combined UV filter loading is {uv['total_percent']:g}% ({filter_list}) - {uv['tier_label']}."
         )
-        sentences.append(f"⚠️ {uv['disclaimer']}")
     elif uv:
         sentences.append(f"{uv['tier_label']} - add mineral or organic UV filters before this can function as sun protection.")
 

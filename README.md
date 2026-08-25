@@ -18,7 +18,7 @@ and a **1 kg** trial batch size - all editable in the sidebar.
 cd cosmetic_formulator
 python -m venv venv && source venv/bin/activate   # optional but recommended
 pip install -r requirements.txt
-cp .env.example .env   # then edit .env and add your Groq key - see below
+cp .env.example .env   # then edit .env and add your Gemini key - see below
 streamlit run app.py
 ```
 
@@ -26,69 +26,95 @@ Then open the local URL Streamlit prints (usually http://localhost:8501).
 The `.env` step is optional - skip it and you can still paste your key into
 the sidebar once the app is open.
 
-## AI providers (Groq + Google Gemini, with automatic fallback)
+## AI provider: Google Gemini (dual-key, fully automatic)
 
-The app supports two AI providers - **Groq** and **Google Gemini** - both
-with genuinely free tiers (no credit card required). Configure one or both
-in the sidebar; if both are configured, the app automatically switches to
-the second one if the first gets rate-limited, so a single provider's quota
-doesn't block you mid-session.
+The app uses **Google Gemini** exclusively, with a genuinely free tier (no
+credit card required). There's no model to pick and no provider to choose -
+just add one or two API keys, and everything else is automatic:
 
-**For each provider**, you have three ways to supply its key:
+- The app always tries **gemini-3.5-flash-lite** first (confirmed to work
+  well) and automatically switches to another Gemini model on its own if
+  that one is ever deprecated, incompatible with the request, rate-limited,
+  or the servers are overloaded - no dropdown, no user action.
+- If you configure a **second key**, the app automatically switches to it
+  if the first is exhausted or rejected - again, no action needed when it
+  happens.
+
+**You have three ways to supply each key:**
 
 **Option A - `.env` file (recommended for local dev)**
 ```bash
 cp .env.example .env
 # then edit .env and paste your key(s):
-# GROQ_API_KEY=gsk_...
 # GEMINI_API_KEY=AIza...
+# GEMINI_API_KEY_2=AIza...   (optional backup)
 ```
-Get a free Groq key at https://console.groq.com and a free Gemini key at
-https://aistudio.google.com/apikey. The app loads `.env` automatically via
-`python-dotenv` on startup. `.env` is already in `.gitignore` - it will
-never get committed.
+Get a free key (no credit card required) at https://aistudio.google.com/apikey.
+The app loads `.env` automatically via `python-dotenv` on startup. `.env` is
+already in `.gitignore` - it will never get committed.
 
 **Option B - paste directly into the sidebar** each time you run the app
-(a password-type field, never written to disk). Each provider has its own
-expander in the sidebar with its own key field.
+(password-type fields, never written to disk). The "Gemini API key(s)"
+expander has a field for the primary key and an optional backup.
 
 **Option C - Streamlit Community Cloud Secrets** (for the hosted version -
-see the deploy section below). Add both `GROQ_API_KEY` and `GEMINI_API_KEY`
-there if you want both providers available to visitors.
+see the deploy section below). Add `GEMINI_API_KEY` (and optionally
+`GEMINI_API_KEY_2`) there if you want it available to visitors without them
+needing their own.
 
-Priority per provider if more than one source is set: **Streamlit Secrets >
-`.env`/environment variable > blank**. You can also optionally set
-`GROQ_MODEL` / `GEMINI_MODEL` in `.env` to preselect a default model for
-each provider's dropdown (must match one of the IDs in `utils/groq_client.py`'s
-`PROVIDERS` dict).
+Priority per key if more than one source is set: **Streamlit Secrets >
+`.env`/environment variable > blank**.
 
-**The sidebar never displays a configured secret.** If a provider's key is
-set via Secrets or `.env`, its expander just shows a "✅ Configured"
-confirmation - never the key itself, even in a password field. A checkbox
-lets you type a *different* key for just that session if you want to (e.g.
-testing your own key against a shared deployment) without ever seeing or
-overwriting the configured one. If nothing is configured for a provider,
-its expander shows a clear caption explaining how to add a key.
+**The sidebar never displays a configured secret.** If a key is set via
+Secrets or `.env`, its field just shows a "✅ Configured" confirmation -
+never the key itself, even in a password field. A checkbox lets you type a
+*different* key for just that session if you want to (e.g. testing your own
+key against a shared deployment) without ever seeing or overwriting the
+configured one.
 
 Manual formula building, compatibility rules, property estimates, regulatory
-check, and cost calculator all work with **no AI provider configured at
-all**. AI is only needed for Formula Studio's generation/refinement and the
-AI Assistant chat tab.
+check, and cost calculator all work with **no API key configured at all**.
+AI is only needed for Formula Studio's generation/refinement and the AI
+Assistant chat tab.
 
-### Rate limits, transient errors, and fallback
+### Automatic fallback: how it actually decides to switch
 
 Every AI call automatically retries on rate limits (HTTP 429) and transient
 server errors (500/502/503/504) or timeouts, using exponential backoff with
-jitter and honoring a provider's `Retry-After` header when it sends one (up
-to 4 retries, capped at 20s between attempts). You'll see the status message
-update live (e.g. "retrying in 3s...") rather than a frozen spinner.
+jitter and honoring Gemini's `Retry-After` header when it sends one. Rate
+limits get a *smaller* retry budget than genuine server hiccups, since a
+rate limit rarely clears within seconds - it's faster and more effective to
+move on than to keep waiting on the same model.
 
-If a provider is *still* rate-limited after exhausting its own retries, and
-you've configured a second provider with "Auto-fallback" enabled, the app
-automatically tries the next provider in the chain - you'll see a status
-message like "Groq unavailable, switching to Google Gemini..." If every
-configured provider fails, you get one clear error message, never a raw
-stack trace.
+Beyond retrying, there are three distinct triggers for switching to a
+*different* model or key entirely, all fully automatic:
+
+1. **Deprecated/unavailable model (404)** - tries the next model on the
+   same key.
+2. **Persistent rate limit or server overload (429/503, even after
+   retrying)** - tries the next model on the same key.
+3. **"Other generation issues"** - the model responded successfully (200
+   OK) but produced content that isn't actually usable (e.g. not valid JSON
+   for a formula request). The app validates every AI response before
+   trusting it, and treats an unusable response as a failure just like a
+   network error - automatically trying the next model rather than
+   accepting garbage. A same-model retry is attempted first (in case it was
+   a one-off slip), then it moves on.
+
+An invalid/rejected key (401/403) skips straight to the *second key*
+(if configured) rather than wasting attempts on sibling models with the
+same bad key. You'll see live status messages the whole way (e.g. "Gemini
+(gemini-3.5-flash-lite) unavailable, switching to Gemini
+(gemini-3.6-flash)..."). If every model on every configured key fails, you
+get one clear error message, never a raw stack trace.
+
+**Model IDs go stale fast.** Google retired `gemini-2.0-flash` on
+2026-03-31 (about 8 months after release) and had shipped four more Flash
+generations by August 2026. If you start seeing repeated failures, open
+`utils/ai_client.py`, find the `GEMINI_MODELS` list near the top, and
+update it with current model IDs from
+https://ai.google.dev/gemini-api/docs/models - nothing else needs to
+change, every part of the app references that list dynamically.
 
 ## Formula Studio walkthrough
 
@@ -103,6 +129,13 @@ stack trace.
 - Choose a sourcing strategy: **In-House**, **Worldwide** (the built-in
   ~45-ingredient sample database), or **In-House + Worldwide**. On a name
   collision, your in-house cost/data wins.
+- **Live web search for worldwide ingredients** is built but currently
+  dormant: the original implementation relied on Groq's search-capable
+  models, which have been removed along with Groq itself. The app
+  gracefully falls back to the static database with an explanatory caption.
+  See `utils/ai_client.py`'s `WEB_SEARCH_CAPABLE_MODELS` (currently empty)
+  if you want to investigate re-enabling this via a confirmed
+  search-capable Gemini model.
 
 **Step 2 - Product brief**
 - Pick a product category/type (Skincare, Color Cosmetics, Haircare,
@@ -180,10 +213,12 @@ data/ingredients.csv           ~45 worldwide cosmetic ingredients: category,
                                 cost/kg (USD), sustainability score, typical pH
                                 range, and EU/US/India allowed status + limits
 data/incompatibilities.json    Known ingredient-pair interaction rules
-utils/groq_client.py           Multi-provider AI client (Groq + Google Gemini):
-                                retry/backoff on rate limits & transient errors,
-                                automatic cross-provider fallback
-utils/formula_ai.py            AI formula generation + refinement: prompt
+utils/ai_client.py             Gemini-only AI client: dual-key + automatic
+                                model fallback (deprecated models, rate
+                                limits, and unusable-content all trigger
+                                switching), retry/backoff on transient errors
+utils/formula_ai.py            AI formula generation + refinement + live web
+                                search for worldwide ingredients: prompt
                                 building, strict JSON validation, hallucination
                                 filtering, percentage renormalization
 utils/inhouse_materials.py     Excel/CSV upload parsing, template generator,
@@ -231,10 +266,24 @@ Studio, the AI is only allowed to pick ingredients from the exact candidate
 list it's handed (so cost/availability is always real), and every formula it
 returns is re-validated in plain Python: hallucinated ingredient names are
 stripped with a visible warning, and percentages are rescaled to sum to
-exactly 100%. In the AI Assistant tab, Groq is only called to add qualitative
+exactly 100%. In the AI Assistant tab, Gemini is only called to add qualitative
 interpretation on top of numbers the app already computed, and is explicitly
 told not to invent new regulatory figures. This keeps the tool useful
 without inheriting an LLM's hallucination risk on the facts that matter most.
+
+## Mobile support
+
+The app is responsive down to phone-sized screens (tested at 375px/iPhone
+width): the hero banner stacks the logo above the text instead of cramming
+them side by side, buttons go full-width with touch-friendly tap targets
+(44px minimum), headings and metric numbers scale down so they don't
+dominate a small screen, form inputs use 16px text (avoids iOS's
+auto-zoom-on-focus), and tables scroll horizontally instead of squashing
+columns unreadably. Streamlit's own layout (columns, containers) already
+stacks responsively on narrow viewports by default; the custom CSS in
+`app.py`'s `CUSTOM_CSS` block (look for the `@media` blocks near the bottom)
+handles the elements this app adds on top of that - the hero banner, badges,
+result cards, and pills.
 
 ## Manual Builder
 
@@ -283,10 +332,12 @@ qualified regulatory affairs review.
   actual value for accurate results.
 - **In-house material data (names, costs, stock) is only ever held in the
   browser session's memory (`st.session_state`)** - it's not written to disk
-  or a database by this app. It IS sent to Groq's API as part of the prompt
-  whenever you generate an AI formula, so don't upload data you wouldn't want
-  leaving your infrastructure under Groq's data-handling terms. If the app is
-  hosted publicly (see below), remember uploaded data only persists for that
+  or a database by this app. It IS sent to Google's Gemini API as part of the
+  prompt whenever you generate an AI formula, so don't upload data you
+  wouldn't want leaving your infrastructure under Google's data-handling
+  terms (see the free-tier note in the AI provider section above - free-tier
+  prompts may be used to improve Google's products). If the app is hosted
+  publicly (see below), remember uploaded data only persists for that
   visitor's session and resets on reload/redeploy - it isn't shared between
   visitors, but it also isn't backed up anywhere.
 
@@ -311,22 +362,21 @@ qualified regulatory affairs review.
 4. It builds `requirements.txt` automatically and gives you a public URL like
    `https://<something>.streamlit.app`.
 
-**Optional - bake in shared keys** so visitors don't need their own:
-in the app's Streamlit Cloud dashboard go to **Settings → Secrets** and add
-either or both:
+**Optional - bake in shared key(s)** so visitors don't need their own:
+in the app's Streamlit Cloud dashboard go to **Settings → Secrets** and add:
 ```toml
-GROQ_API_KEY = "gsk_..."
 GEMINI_API_KEY = "AIza..."
+GEMINI_API_KEY_2 = "AIza..."   # optional backup
 ```
 `app.py` already checks `st.secrets` for these and shows a "✅ Configured"
-confirmation for each provider (visitors can still override with their own
-key via the checkbox). Without this, each visitor just pastes their own
-key(s) in the sidebar - nothing is stored server-side either way. Note that
-`.env` is a local-only mechanism (it's gitignored, so it never reaches
-GitHub or Streamlit Cloud) - on Cloud, Secrets is the equivalent.
+confirmation for each (visitors can still override with their own key via
+the checkbox). Without this, each visitor just pastes their own key(s) in
+the sidebar - nothing is stored server-side either way. Note that `.env` is
+a local-only mechanism (it's gitignored, so it never reaches GitHub or
+Streamlit Cloud) - on Cloud, Secrets is the equivalent.
 
 **Note on public hosting**: since the app is public, anyone with the URL can
-use it (and, if you set a shared secret key, can spend your Groq quota via
+use it (and, if you set a shared secret key, can spend your Gemini quota via
 the AI Assistant tab). If you want to restrict access, Community Cloud
 supports app-level viewer permissions/private apps on paid tiers - see
 [Streamlit's docs](https://docs.streamlit.io/deploy/streamlit-community-cloud).
@@ -344,5 +394,7 @@ supports app-level viewer permissions/private apps on paid tiers - see
   with its symbol, name, and an approximate default USD rate.
 - **Add a product category/type**: edit the `PRODUCT_CATEGORIES` dict at the
   top of `app.py`.
-- **Swap AI providers**: `utils/groq_client.py` is a ~60-line wrapper; the
-  same pattern works for any OpenAI-compatible endpoint.
+- **Add another AI provider**: `utils/ai_client.py` currently targets
+  Gemini's OpenAI-compatible endpoint specifically; the same request/retry
+  pattern works for any OpenAI-compatible endpoint (Groq, OpenAI itself,
+  etc.) if you want to reintroduce multi-provider support later.

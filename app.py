@@ -10,7 +10,10 @@ from PIL import Image
 
 load_dotenv()  # picks up a local .env file if present; no-op if it doesn't exist
 
-from utils.groq_client import call_groq, GroqError, GroqRateLimitError, AVAILABLE_MODELS, PROVIDERS, make_call_fn
+from utils.ai_client import (
+    AIError, AIRateLimitError, GEMINI_MODELS, GEMINI_SIGNUP_URL, GEMINI_FREE_TIER_NOTE,
+    GEMINI_KEY_ENV_VARS, WEB_SEARCH_CAPABLE_MODELS, make_call_fn, call_gemini_with_fallback,
+)
 from utils.property_estimator import estimate_ph, estimate_viscosity, estimate_stability
 from utils.compatibility_checker import check_compatibility, sort_flags
 from utils.regulatory_checker import check_regulatory, summarize, REGIONS
@@ -21,7 +24,7 @@ from utils.inhouse_materials import (
 )
 from utils.formula_ai import (
     build_candidate_context, build_incompat_context, generate_formula, refine_formula,
-    validate_and_normalize, FormulaGenerationError,
+    validate_and_normalize, FormulaGenerationError, search_worldwide_ingredients, web_results_to_candidate_rows,
 )
 from utils.currency import CURRENCY_OPTIONS, currency_label, format_money
 from utils.technical_profile import compute_technical_profile, render_technical_description
@@ -128,11 +131,14 @@ h1, h2, h3 { font-family: 'Poppins', sans-serif !important; font-weight: 700 !im
     text-transform: uppercase; margin: 0 0 0.5rem 0; font-weight: 600; }
 .hero-title-group p.hero-sub { color: #b9c2ea; font-size: 0.95rem; margin: 0; }
 
-.stButton > button {
+.stButton > button, .stDownloadButton > button, .stFormSubmitButton > button {
     background: linear-gradient(135deg, #8154FC, #4ADAFD); color: #ffffff; border: none;
     border-radius: 8px; font-weight: 600; padding: 0.5rem 1.2rem; transition: all .15s ease;
+    min-height: 42px;
 }
-.stButton > button:hover { box-shadow: 0 4px 16px rgba(129, 84, 252, 0.45); transform: translateY(-1px); }
+.stButton > button:hover, .stDownloadButton > button:hover, .stFormSubmitButton > button:hover {
+    box-shadow: 0 4px 16px rgba(129, 84, 252, 0.45); transform: translateY(-1px);
+}
 .stButton > button[kind="secondary"] { background: #171344; color: #d9e0ff; }
 
 [data-testid="stMetricValue"] { font-family: 'Poppins', sans-serif; color: #171344; }
@@ -153,12 +159,67 @@ h1, h2, h3 { font-family: 'Poppins', sans-serif !important; font-weight: 700 !im
     border-radius:999px; font-size:0.85rem; margin:0.2rem 0.3rem 0.2rem 0; }
 
 .result-card { background:#f7f5ff; border:1px solid #e3daff; border-radius:14px;
-    padding:1.3rem 1.5rem; margin-bottom:1rem; }
+    padding:1.3rem 1.5rem; margin-bottom:1rem; word-wrap: break-word; overflow-wrap: break-word; }
 .step-label { color:#8154FC; font-weight:700; letter-spacing:1px; font-size:0.8rem;
     text-transform:uppercase; margin-bottom:-0.4rem; }
 .version-pill { display:inline-block; background:#f0edfd; color:#524a7a; padding:0.2rem 0.7rem;
     border-radius:999px; font-size:0.78rem; margin:0 0.3rem 0.3rem 0; border:1px solid #d8ccf7; }
 .version-pill.active { background:#171344; color:#c9e8ff; border-color:#171344; }
+
+/* Tables/dataframes scroll horizontally instead of squashing columns unreadably */
+[data-testid="stDataFrame"], [data-testid="stTable"] { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* ===================== Mobile responsiveness ===================== */
+@media (max-width: 768px) {
+    /* Reclaim Streamlit's default side padding for more usable width on small screens.
+       Target both the stable testid and the legacy class name as a fallback, since
+       Streamlit's internal class names can change between versions. */
+    [data-testid="stMainBlockContainer"], .block-container { padding-left: 1rem !important; padding-right: 1rem !important; padding-top: 1.5rem !important; }
+
+    /* Hero banner: stack logo above text instead of cramming them side by side */
+    .hero-banner {
+        flex-direction: column; align-items: flex-start; text-align: left;
+        padding: 1.1rem 1.3rem; gap: 0.7rem; border-radius: 16px;
+    }
+    .hero-banner img.hero-logo { height: 60px; }
+    .hero-title-group .hero-tagline { font-size: 0.68rem; letter-spacing: 1.5px; }
+    .hero-title-group p.hero-sub { font-size: 0.82rem; line-height: 1.4; }
+
+    /* Headings scale down so they don't dominate a small screen */
+    h1 { font-size: 1.45rem !important; }
+    h2 { font-size: 1.2rem !important; }
+    h3 { font-size: 1.02rem !important; }
+
+    /* Buttons: full width with a comfortable tap target (44px is the accepted minimum) */
+    .stButton > button, .stDownloadButton > button, .stFormSubmitButton > button {
+        width: 100%; min-height: 44px; padding: 0.6rem 1rem; font-size: 0.95rem;
+    }
+
+    /* Metrics: desktop-sized numbers are oversized and wrap awkwardly on narrow screens */
+    [data-testid="stMetricValue"] { font-size: 1.3rem !important; }
+    [data-testid="stMetricLabel"] { font-size: 0.76rem !important; }
+
+    /* Cards & pills: tighter padding/text so content fits without excessive wrapping */
+    .result-card { padding: 1rem 1.1rem; border-radius: 12px; }
+    .badge { font-size: 0.72rem; padding: 0.2rem 0.6rem; }
+    .claim-pill { font-size: 0.78rem; padding: 0.25rem 0.7rem; }
+    .version-pill { font-size: 0.72rem; padding: 0.18rem 0.6rem; }
+    .step-label { font-size: 0.72rem; }
+
+    /* Form inputs: comfortable tap-target height, readable text size (16px avoids iOS auto-zoom-on-focus) */
+    .stTextInput input, .stNumberInput input, .stTextArea textarea,
+    .stSelectbox [data-baseweb="select"] > div { min-height: 42px; font-size: 16px; }
+
+    /* Radio groups (several are horizontal=True) get tighter gaps so options wrap cleanly */
+    .stRadio > div { gap: 0.4rem !important; row-gap: 0.5rem !important; }
+}
+
+@media (max-width: 480px) {
+    .hero-banner img.hero-logo { height: 48px; }
+    h1 { font-size: 1.25rem !important; }
+    [data-testid="stMetricValue"] { font-size: 1.1rem !important; }
+    .result-card { padding: 0.85rem 0.9rem; }
+}
 </style>
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
@@ -269,27 +330,74 @@ def get_candidate_df(source_strategy: str, fx_rate: float = 1.0):
     return merge_material_sources(get_converted_worldwide_df(fx_rate), st.session_state.inhouse_df, source_strategy)
 
 
+def augment_with_web_search(candidate_df, call_fn, source_strategy, product_category,
+                             product_subtype, description, positioning, fx_rate, status_obj):
+    """
+    If the sourcing strategy includes Worldwide AND a search-capable model is
+    available, ask it to find real, currently-relevant worldwide ingredients
+    beyond the static database and fold them into the candidate pool (tagged
+    'Worldwide (Web)', with AI-estimated costs clearly caveated as such).
+    Best-effort: any failure just falls back to the static database with an
+    info note, never blocks formula generation.
+
+    Currently WEB_SEARCH_CAPABLE_MODELS is empty (see utils/ai_client.py) so
+    this always takes the graceful-fallback path - kept in place, ready to
+    re-enable if a confirmed-search-capable Gemini model is added later.
+
+    Returns (expanded_candidate_df, web_ingredients_list, note_message_or_None).
+    """
+    if "Worldwide" not in source_strategy:
+        return candidate_df, [], None
+    if not WEB_SEARCH_CAPABLE_MODELS:
+        return candidate_df, [], "Using the built-in worldwide database only (live web-sourced ingredient search is temporarily unavailable)."
+
+    status_obj.update(label="Searching worldwide ingredient sources...")
+    try:
+        web_ingredients = search_worldwide_ingredients(
+            call_fn, product_category, product_subtype, description, positioning,
+            on_retry=make_status_retry_callback(status_obj, "Searching worldwide ingredient sources..."),
+        )
+    except (AIError, FormulaGenerationError) as e:
+        return candidate_df, [], f"Web ingredient search didn't return results this time ({e}) - continuing with the built-in database."
+
+    rows = web_results_to_candidate_rows(web_ingredients, list(candidate_df.columns))
+    if not rows:
+        return candidate_df, [], "Web search didn't surface any usable new ingredients this time - continuing with the built-in database."
+
+    web_df = pd.DataFrame(rows)
+    if fx_rate and fx_rate != 1.0:
+        web_df["cost_per_kg_usd"] = web_df["cost_per_kg_usd"] * fx_rate
+    web_df["source"] = "Worldwide (Web)"
+    expanded = pd.concat([candidate_df, web_df], ignore_index=True)
+    expanded = expanded.drop_duplicates(subset="inci_name", keep="first")
+    status_obj.update(label=f"Found {len(rows)} additional worldwide ingredient(s) via web search - formulating...")
+    return expanded, web_ingredients, None
+
+
 def make_status_retry_callback(status_obj, base_label):
     """Feeds live rate-limit/retry progress into a st.status() box instead of
     the user just seeing a frozen spinner during a 429 backoff. `reason`
-    already includes the provider name (e.g. "Groq rate limit")."""
+    already includes the key/model label (e.g. "Gemini rate limit")."""
     def _on_retry(attempt, max_attempts, wait_seconds, reason):
         status_obj.update(label=f"{base_label} — {reason}, retrying in {wait_seconds:.0f}s (attempt {attempt}/{max_attempts})...")
     return _on_retry
 
 
 def make_status_fallback_callback(status_obj, base_label):
-    """Feeds a live 'switching providers' message into a st.status() box when
-    the primary provider fails and the app moves to the next one in the chain."""
-    def _on_fallback(from_provider, to_provider, reason):
-        status_obj.update(label=f"{base_label} — {from_provider} unavailable, switching to {to_provider}...")
+    """Feeds a live 'switching key/model' message into a st.status() box when
+    the current attempt fails and the app automatically moves to the next
+    one in the chain (a different model on the same key, or the second key)."""
+    def _on_fallback(from_label, to_label, reason):
+        status_obj.update(label=f"{base_label} — {from_label} unavailable, switching to {to_label}...")
     return _on_fallback
 
 
 # --------------------------------------------------------------------------
-# Sidebar - AI provider config (multi-provider with fallback), currency, region, batch size
+# Sidebar - Gemini API keys (dual-key with automatic fallback, no model
+# selection - the app always tries GEMINI_MODELS in order automatically),
+# currency, region, batch size
 # --------------------------------------------------------------------------
-def get_default_provider_key(key_env_var: str) -> str:
+def get_default_key(key_env_var: str) -> str:
     """Resolve a default API key for a given env var name with this priority:
     1. st.secrets (Streamlit Community Cloud's Settings -> Secrets)
     2. environment variable (from a local .env file via python-dotenv, or the shell)
@@ -304,75 +412,49 @@ def get_default_provider_key(key_env_var: str) -> str:
     return os.environ.get(key_env_var, "")
 
 
-def get_default_model_index(models: list, model_env_var: str) -> int:
-    env_model = os.environ.get(model_env_var, "")
-    if env_model in models:
-        return models.index(env_model)
-    return 0
-
-
-def render_provider_key_input(provider_name: str, key_env_var: str) -> str:
-    """Same 'never show a configured secret' pattern as before, now reusable
-    per-provider. Returns the resolved key (empty string if none configured/entered)."""
-    default_key = get_default_provider_key(key_env_var)
+def render_key_input(field_label: str, key_env_var: str, widget_key: str) -> str:
+    """'Never show a configured secret' pattern: if a key is set via Secrets/.env,
+    show only a confirmation - never the value itself, even in a password field.
+    A checkbox lets the user type a different key for just this session."""
+    default_key = get_default_key(key_env_var)
     if default_key:
-        st.success("✅ Configured (via Secrets/.env)")
-        use_override = st.checkbox("Use a different key for this session", key=f"{provider_name}_override_checkbox")
+        st.success(f"✅ {field_label}: configured (via Secrets/.env)")
+        use_override = st.checkbox(f"Use a different {field_label.lower()} for this session", key=f"{widget_key}_override_checkbox")
         if use_override:
             override_key = st.text_input(
-                f"Your {provider_name} API key", type="password", key=f"{provider_name}_override_key",
+                f"Your {field_label}", type="password", key=f"{widget_key}_override_key",
                 help="Overrides the configured key for this browser session only. Never written to disk.",
             )
             return override_key or default_key
         return default_key
     else:
         st.caption(f"Not configured. Set `{key_env_var}` in Secrets/.env, or enter one below for this session only.")
-        return st.text_input(f"{provider_name} API key", type="password", key=f"{provider_name}_manual_key")
+        return st.text_input(field_label, type="password", key=f"{widget_key}_manual_key")
 
 
 with st.sidebar:
     st.header("⚙️ Settings")
 
-    st.markdown("**AI Providers**")
-    st.caption("Configure one or both. With two configured, the app automatically switches to the second if the first hits a rate limit - so a single provider's quota doesn't block you.")
+    st.markdown("**AI Provider: Google Gemini**")
+    st.caption(
+        "No model to pick - the app automatically uses gemini-3.5-flash-lite by default and "
+        "switches to another Gemini model on its own if that one is ever deprecated, incompatible, "
+        "rate-limited, or overloaded. Configure a second key below and it'll switch to that "
+        "automatically too if the first is exhausted - nothing for you to do when it happens."
+    )
 
-    provider_keys = {}
-    provider_models = {}
-    for _pname, _pconfig in PROVIDERS.items():
-        with st.expander(_pname, expanded=(_pname == "Groq")):
-            provider_keys[_pname] = render_provider_key_input(_pname, _pconfig["key_env"])
-            model_env_var = _pconfig["key_env"].replace("_API_KEY", "_MODEL")
-            provider_models[_pname] = st.selectbox(
-                "Model", _pconfig["models"], index=get_default_model_index(_pconfig["models"], model_env_var),
-                key=f"{_pname}_model_select",
-            )
-            st.caption(f"{_pconfig['free_tier_note']} [Get a key]({_pconfig['signup_url']})")
+    with st.expander("Gemini API key(s)", expanded=True):
+        gemini_key_1 = render_key_input("Gemini API key", GEMINI_KEY_ENV_VARS[0], "gemini_key1")
+        st.divider()
+        gemini_key_2 = render_key_input("Gemini API key (backup, optional)", GEMINI_KEY_ENV_VARS[1], "gemini_key2")
+        st.caption(f"{GEMINI_FREE_TIER_NOTE} [Get a key]({GEMINI_SIGNUP_URL})")
 
-    configured_providers = [p for p in PROVIDERS if provider_keys[p]]
-    if len(configured_providers) >= 2:
-        primary_provider = st.selectbox("Primary provider", configured_providers, index=0)
-        enable_fallback = st.checkbox("Auto-fallback to the other provider if rate-limited", value=True)
-    elif len(configured_providers) == 1:
-        primary_provider = configured_providers[0]
-        enable_fallback = False
-        st.caption(f"Using {primary_provider} (configure a second provider above to enable automatic fallback).")
-    else:
-        primary_provider = None
-        enable_fallback = False
-        st.warning("⚠️ No AI provider configured - AI features are disabled until you add a key above.")
-
-    def build_provider_chain():
-        if not primary_provider:
-            return []
-        chain = [(primary_provider, provider_keys[primary_provider], provider_models[primary_provider])]
-        if enable_fallback:
-            for p in configured_providers:
-                if p != primary_provider:
-                    chain.append((p, provider_keys[p], provider_models[p]))
-        return chain
-
-    provider_chain = build_provider_chain()
-    ai_available = bool(provider_chain)
+    api_keys = [gemini_key_1, gemini_key_2]
+    ai_available = bool(gemini_key_1 or gemini_key_2)
+    if not ai_available:
+        st.warning("⚠️ No Gemini API key configured - AI features are disabled until you add one above.")
+    elif gemini_key_1 and gemini_key_2:
+        st.caption("✅ Two keys configured - automatic fallback between them is active.")
 
     st.divider()
 
@@ -501,6 +583,8 @@ with tab_studio:
         metric_col2.metric("Worldwide database", n_worldwide)
         if source_strategy in ("In-House", "In-House + Worldwide") and n_inhouse == 0:
             st.warning("Add or upload at least one in-house material, or switch strategy to Worldwide.")
+        if "Worldwide" in source_strategy and not WEB_SEARCH_CAPABLE_MODELS:
+            st.caption("ℹ️ Using the built-in worldwide database only (live web-sourced ingredient search is temporarily unavailable).")
 
     st.markdown('<p class="step-label">Step 2</p>', unsafe_allow_html=True)
     st.subheader("Product brief")
@@ -530,7 +614,7 @@ with tab_studio:
 
     if generate_clicked:
         if not ai_available:
-            st.error("No AI provider configured. Add a Groq or Google Gemini API key in the sidebar, or configure Secrets/.env.")
+            st.error("No Gemini API key configured. Add one in the sidebar, or configure Secrets/.env.")
         elif not description.strip():
             st.error("Describe the desired product before generating.")
         else:
@@ -540,9 +624,14 @@ with tab_studio:
             else:
                 with st.status("Formulating... the AI is designing your formula", expanded=False) as status:
                     try:
+                        call_fn = make_call_fn(api_keys, on_fallback=make_status_fallback_callback(status, "Formulating..."))
+                        candidate_df, web_ingredients, web_note = augment_with_web_search(
+                            candidate_df, call_fn, source_strategy, product_category,
+                            product_subtype, description, positioning, fx_rate, status,
+                        )
                         candidate_ingredients = build_candidate_context(candidate_df)
                         incompat_rules = build_incompat_context(incompat_data)
-                        call_fn = make_call_fn(provider_chain, on_fallback=make_status_fallback_callback(status, "Formulating..."))
+                        status.update(label="Formulating... the AI is designing your formula")
                         raw = generate_formula(
                             call_fn, product_category, product_subtype,
                             description, positioning, source_strategy, candidate_ingredients, incompat_rules,
@@ -556,13 +645,13 @@ with tab_studio:
                             "candidate_df": candidate_df, "region": region, "positioning": positioning,
                             "product_category": product_category, "product_subtype": product_subtype,
                             "description": description, "source_strategy": source_strategy,
-                            "refinement_history": [],
+                            "refinement_history": [], "web_ingredients": web_ingredients, "web_note": web_note,
                         }
                         st.session_state.ai_formula_result = new_result
                         st.session_state.formula_versions = [{"label": "v1 · Initial", "result": new_result}]
                         st.session_state.active_version_idx = 0
                         status.update(label="Formula generated!", state="complete")
-                    except GroqError as e:
+                    except AIError as e:
                         status.update(label="Generation failed", state="error")
                         st.error(str(e))
                     except FormulaGenerationError as e:
@@ -710,6 +799,20 @@ with tab_studio:
                 st.caption(f"Emulsifiers: {', '.join(fi['emulsifiers']) or 'none'}")
                 st.caption(f"Thickeners: {', '.join(fi['thickeners']) or 'none'}")
 
+        web_ingredients = result.get("web_ingredients") or []
+        web_note = result.get("web_note")
+        if web_ingredients:
+            with st.expander(f"🔍 {len(web_ingredients)} worldwide ingredient(s) found via live web search", expanded=False):
+                st.caption("AI-researched from current web sources - costs are estimates, not locked supplier quotes. Verify before sourcing.")
+                web_df = pd.DataFrame(web_ingredients).rename(columns={
+                    "inci_name": "Ingredient", "category": "Category", "function": "Function",
+                    "estimated_cost_per_kg_usd": "Est. Cost/kg (USD)", "sourcing_note": "Sourcing note",
+                    "source_confidence": "Confidence",
+                })
+                st.dataframe(web_df, width="stretch", hide_index=True)
+        elif web_note:
+            st.caption(f"ℹ️ {web_note}")
+
         if meta["recommended_worldwide_upgrades"]:
             st.markdown("**✨ Recommended worldwide upgrades for this positioning**")
             up_cols = st.columns(len(meta["recommended_worldwide_upgrades"]))
@@ -762,16 +865,22 @@ with tab_studio:
 
         if refine_clicked:
             if not ai_available:
-                st.error("No AI provider configured. Add a Groq or Google Gemini API key in the sidebar, or configure Secrets/.env.")
+                st.error("No Gemini API key configured. Add one in the sidebar, or configure Secrets/.env.")
             elif not refinement_instruction.strip():
                 st.error("Describe what should change before refining.")
             else:
                 refine_candidate_df = get_candidate_df(result["source_strategy"], fx_rate)
                 with st.status("Refining... applying your feedback to the formula", expanded=False) as status:
                     try:
+                        call_fn = make_call_fn(api_keys, on_fallback=make_status_fallback_callback(status, "Refining..."))
+                        refine_candidate_df, web_ingredients, web_note = augment_with_web_search(
+                            refine_candidate_df, call_fn, result["source_strategy"],
+                            result["product_category"], result["product_subtype"], result["description"],
+                            result["positioning"], fx_rate, status,
+                        )
                         candidate_ingredients = build_candidate_context(refine_candidate_df)
                         incompat_rules = build_incompat_context(incompat_data)
-                        call_fn = make_call_fn(provider_chain, on_fallback=make_status_fallback_callback(status, "Refining..."))
+                        status.update(label="Refining... applying your feedback to the formula")
                         raw = refine_formula(
                             call_fn, meta, phases, result["product_category"], result["product_subtype"],
                             result["description"], result["positioning"], result["source_strategy"], refinement_instruction,
@@ -788,6 +897,7 @@ with tab_studio:
                             "product_category": result["product_category"], "product_subtype": result["product_subtype"],
                             "description": result["description"], "source_strategy": result["source_strategy"],
                             "refinement_history": result.get("refinement_history", []) + [refinement_instruction],
+                            "web_ingredients": web_ingredients, "web_note": web_note,
                         }
                         version_num = len(st.session_state.formula_versions) + 1
                         short_note = refinement_instruction.strip()
@@ -798,7 +908,7 @@ with tab_studio:
                         st.session_state.ai_formula_result = new_result
                         status.update(label="Formula refined!", state="complete")
                         st.rerun()
-                    except GroqError as e:
+                    except AIError as e:
                         status.update(label="Refinement failed", state="error")
                         st.error(str(e))
                     except FormulaGenerationError as e:
@@ -1130,7 +1240,7 @@ with tab_ai:
     working_df = get_working_ingredients_df(fx_rate)
 
     if not ai_available:
-        st.info("No AI provider configured. Add a Groq or Google Gemini API key in the sidebar, or configure Secrets/.env, to enable this tab.")
+        st.info("No Gemini API key configured. Add one in the sidebar, or configure Secrets/.env, to enable this tab.")
     elif not st.session_state.formula:
         st.info("Add ingredients in the Manual Builder or generate a formula in Formula Studio first.")
     else:
@@ -1166,10 +1276,10 @@ with tab_ai:
             )
             with st.status("Thinking...", expanded=False) as status:
                 try:
-                    call_fn = make_call_fn(provider_chain, on_fallback=make_status_fallback_callback(status, "Thinking..."))
+                    call_fn = make_call_fn(api_keys, on_fallback=make_status_fallback_callback(status, "Thinking..."))
                     reply = call_fn(prompt, on_retry=make_status_retry_callback(status, "Thinking..."))
                     status.update(label="Done", state="complete")
                     st.markdown(reply)
-                except GroqError as e:
+                except AIError as e:
                     status.update(label="Failed", state="error")
                     st.error(str(e))

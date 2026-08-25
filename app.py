@@ -12,7 +12,7 @@ load_dotenv()  # picks up a local .env file if present; no-op if it doesn't exis
 
 from utils.ai_client import (
     AIError, AIRateLimitError, GEMINI_MODELS, GEMINI_SIGNUP_URL, GEMINI_FREE_TIER_NOTE,
-    GEMINI_KEY_ENV_VARS, WEB_SEARCH_CAPABLE_MODELS, make_call_fn, call_gemini_with_fallback,
+    GEMINI_KEY_ENV_VARS, make_call_fn, call_gemini_with_fallback,
 )
 from utils.property_estimator import estimate_ph, estimate_viscosity, estimate_stability
 from utils.compatibility_checker import check_compatibility, sort_flags
@@ -20,11 +20,12 @@ from utils.regulatory_checker import check_regulatory, summarize, REGIONS
 from utils.cost_calculator import calculate_cost, find_substitutes, calculate_unit_economics, units_from_batch
 from utils.inhouse_materials import (
     parse_inhouse_upload, generate_template_bytes, merge_material_sources,
-    merge_inhouse_upload, add_manual_material, empty_inhouse_df, InHouseParseError,
+    merge_inhouse_upload, add_manual_material, empty_inhouse_df, InHouseParseError, STANDARD_COLUMNS,
 )
 from utils.formula_ai import (
     build_candidate_context, build_incompat_context, generate_formula, refine_formula,
     validate_and_normalize, FormulaGenerationError, search_worldwide_ingredients, web_results_to_candidate_rows,
+    search_alternative_materials,
 )
 from utils.currency import CURRENCY_OPTIONS, currency_label, format_money
 from utils.technical_profile import compute_technical_profile, render_technical_description
@@ -330,35 +331,33 @@ def get_candidate_df(source_strategy: str, fx_rate: float = 1.0):
     return merge_material_sources(get_converted_worldwide_df(fx_rate), st.session_state.inhouse_df, source_strategy)
 
 
-def augment_with_web_search(candidate_df, call_fn, source_strategy, product_category,
+def augment_with_web_search(candidate_df, api_keys, source_strategy, product_category,
                              product_subtype, description, positioning, fx_rate, status_obj):
     """
-    If the sourcing strategy includes Worldwide AND a search-capable model is
-    available, ask it to find real, currently-relevant worldwide ingredients
-    beyond the static database and fold them into the candidate pool (tagged
-    'Worldwide (Web)', with AI-estimated costs clearly caveated as such).
-    Best-effort: any failure just falls back to the static database with an
-    info note, never blocks formula generation.
-
-    Currently WEB_SEARCH_CAPABLE_MODELS is empty (see utils/ai_client.py) so
-    this always takes the graceful-fallback path - kept in place, ready to
-    re-enable if a confirmed-search-capable Gemini model is added later.
+    If the sourcing strategy includes Worldwide, use Gemini's native Google
+    Search grounding to find real, currently-relevant worldwide ingredients
+    beyond the static database and fold them into the candidate pool
+    (tagged 'Worldwide (Web)', with AI-estimated costs clearly caveated as
+    such) - purely as additional research context; the main generation call
+    already has a free hand to name any real ingredient regardless of
+    whether it showed up here (see validate_and_normalize's
+    restrict_to_candidates=False path). Best-effort: any failure just falls
+    back to the static database with an info note, never blocks formula
+    generation.
 
     Returns (expanded_candidate_df, web_ingredients_list, note_message_or_None).
     """
     if "Worldwide" not in source_strategy:
         return candidate_df, [], None
-    if not WEB_SEARCH_CAPABLE_MODELS:
-        return candidate_df, [], "Using the built-in worldwide database only (live web-sourced ingredient search is temporarily unavailable)."
 
     status_obj.update(label="Searching worldwide ingredient sources...")
     try:
         web_ingredients = search_worldwide_ingredients(
-            call_fn, product_category, product_subtype, description, positioning,
-            on_retry=make_status_retry_callback(status_obj, "Searching worldwide ingredient sources..."),
+            api_keys, product_category, product_subtype, description, positioning,
+            on_fallback=make_status_fallback_callback(status_obj, "Searching worldwide ingredient sources..."),
         )
     except (AIError, FormulaGenerationError) as e:
-        return candidate_df, [], f"Web ingredient search didn't return results this time ({e}) - continuing with the built-in database."
+        return candidate_df, [], f"Web ingredient search didn't return results this time ({e}) - the AI will still use its own knowledge to select worldwide ingredients."
 
     rows = web_results_to_candidate_rows(web_ingredients, list(candidate_df.columns))
     if not rows:
@@ -580,11 +579,11 @@ with tab_studio:
         n_inhouse = len(st.session_state.inhouse_df)
         n_worldwide = len(worldwide_df)
         metric_col1.metric("In-house materials", n_inhouse)
-        metric_col2.metric("Worldwide database", n_worldwide)
+        metric_col2.metric("Worldwide reference set", n_worldwide, help="Ingredients with pre-verified cost/regulatory data - a starting point, not a limit. For Worldwide sourcing, the AI can also search the web and use its own knowledge to select any other real, commercially available ingredient.")
         if source_strategy in ("In-House", "In-House + Worldwide") and n_inhouse == 0:
             st.warning("Add or upload at least one in-house material, or switch strategy to Worldwide.")
-        if "Worldwide" in source_strategy and not WEB_SEARCH_CAPABLE_MODELS:
-            st.caption("ℹ️ Using the built-in worldwide database only (live web-sourced ingredient search is temporarily unavailable).")
+        if "Worldwide" in source_strategy:
+            st.caption(f"🔍 Open-ended worldwide sourcing: the AI isn't limited to the {n_worldwide} reference materials above - it searches the web and draws on its own knowledge to select any real, commercially available ingredient worldwide.")
 
     st.markdown('<p class="step-label">Step 2</p>', unsafe_allow_html=True)
     st.subheader("Product brief")
@@ -606,6 +605,12 @@ with tab_studio:
                         "fragrance-free, silicone-free, targets dullness and uneven tone.",
             height=90,
         )
+        benchmark_product = st.text_input(
+            "Benchmark product (optional)",
+            placeholder="e.g. \"CeraVe Moisturizing Cream, but lighter\" or \"similar texture to La Roche-Posay Effaclar Duo\"",
+            help="A real or well-known product to use as a reference point for texture, sensory feel, and "
+                 "performance - the AI will factor this in without copying any protected branding, formula, or claims.",
+        )
 
     st.markdown('<p class="step-label">Step 3</p>', unsafe_allow_html=True)
     st.subheader("Generate")
@@ -626,7 +631,7 @@ with tab_studio:
                     try:
                         call_fn = make_call_fn(api_keys, on_fallback=make_status_fallback_callback(status, "Formulating..."))
                         candidate_df, web_ingredients, web_note = augment_with_web_search(
-                            candidate_df, call_fn, source_strategy, product_category,
+                            candidate_df, api_keys, source_strategy, product_category,
                             product_subtype, description, positioning, fx_rate, status,
                         )
                         candidate_ingredients = build_candidate_context(candidate_df)
@@ -636,16 +641,23 @@ with tab_studio:
                             call_fn, product_category, product_subtype,
                             description, positioning, source_strategy, candidate_ingredients, incompat_rules,
                             currency_code=currency_code, on_retry=make_status_retry_callback(status, "Formulating..."),
+                            benchmark_product=benchmark_product,
                         )
                         candidate_names = set(candidate_df["inci_name"])
                         worldwide_names = set(worldwide_df["inci_name"])
-                        flat, phases_out, warnings, meta = validate_and_normalize(raw, candidate_names, worldwide_names)
+                        restrict = "Worldwide" not in source_strategy
+                        flat, phases_out, warnings, meta, new_ingredients = validate_and_normalize(
+                            raw, candidate_names, worldwide_names, restrict_to_candidates=restrict)
+                        if new_ingredients:
+                            candidate_df = pd.concat([candidate_df, pd.DataFrame(new_ingredients).assign(source="Worldwide (AI-selected)")], ignore_index=True)
+                            candidate_df = candidate_df.drop_duplicates(subset="inci_name", keep="first")
                         new_result = {
                             "flat": flat, "phases": phases_out, "warnings": warnings, "meta": meta,
                             "candidate_df": candidate_df, "region": region, "positioning": positioning,
                             "product_category": product_category, "product_subtype": product_subtype,
                             "description": description, "source_strategy": source_strategy,
                             "refinement_history": [], "web_ingredients": web_ingredients, "web_note": web_note,
+                            "benchmark_product": benchmark_product,
                         }
                         st.session_state.ai_formula_result = new_result
                         st.session_state.formula_versions = [{"label": "v1 · Initial", "result": new_result}]
@@ -793,7 +805,6 @@ with tab_studio:
                         st.dataframe(pd.DataFrame(uv["filters"]).rename(columns={"name": "Filter", "percent": "%"}),
                                       width="stretch", hide_index=True)
                     st.write(f"**Total: {uv['total_percent']:g}%** — {uv['tier_label']}")
-                    st.warning(uv["disclaimer"])
                 st.markdown("**Functional ingredients**")
                 fi = tech_profile["functional_ingredients"]
                 st.caption(f"Emulsifiers: {', '.join(fi['emulsifiers']) or 'none'}")
@@ -874,7 +885,7 @@ with tab_studio:
                     try:
                         call_fn = make_call_fn(api_keys, on_fallback=make_status_fallback_callback(status, "Refining..."))
                         refine_candidate_df, web_ingredients, web_note = augment_with_web_search(
-                            refine_candidate_df, call_fn, result["source_strategy"],
+                            refine_candidate_df, api_keys, result["source_strategy"],
                             result["product_category"], result["product_subtype"], result["description"],
                             result["positioning"], fx_rate, status,
                         )
@@ -887,10 +898,16 @@ with tab_studio:
                             candidate_ingredients, incompat_rules, currency_code=currency_code,
                             prior_refinements=result.get("refinement_history", []),
                             on_retry=make_status_retry_callback(status, "Refining..."),
+                            benchmark_product=result.get("benchmark_product"),
                         )
                         candidate_names = set(refine_candidate_df["inci_name"])
                         worldwide_names = set(worldwide_df["inci_name"])
-                        new_flat, new_phases, new_warnings, new_meta = validate_and_normalize(raw, candidate_names, worldwide_names)
+                        restrict = "Worldwide" not in result["source_strategy"]
+                        new_flat, new_phases, new_warnings, new_meta, new_ingredients = validate_and_normalize(
+                            raw, candidate_names, worldwide_names, restrict_to_candidates=restrict)
+                        if new_ingredients:
+                            refine_candidate_df = pd.concat([refine_candidate_df, pd.DataFrame(new_ingredients).assign(source="Worldwide (AI-selected)")], ignore_index=True)
+                            refine_candidate_df = refine_candidate_df.drop_duplicates(subset="inci_name", keep="first")
                         new_result = {
                             "flat": new_flat, "phases": new_phases, "warnings": new_warnings, "meta": new_meta,
                             "candidate_df": refine_candidate_df, "region": region, "positioning": result["positioning"],
@@ -898,6 +915,7 @@ with tab_studio:
                             "description": result["description"], "source_strategy": result["source_strategy"],
                             "refinement_history": result.get("refinement_history", []) + [refinement_instruction],
                             "web_ingredients": web_ingredients, "web_note": web_note,
+                            "benchmark_product": result.get("benchmark_product"),
                         }
                         version_num = len(st.session_state.formula_versions) + 1
                         short_note = refinement_instruction.strip()
@@ -920,6 +938,9 @@ with tab_studio:
         with act1:
             if st.button("➡️ Load into other tabs", width="stretch"):
                 st.session_state.formula = flat
+                ai_selected_rows = candidate_df[candidate_df.get("source", "") == "Worldwide (AI-selected)"] if "source" in candidate_df.columns else candidate_df.iloc[0:0]
+                if not ai_selected_rows.empty:
+                    st.session_state.inhouse_df = merge_inhouse_upload(st.session_state.inhouse_df, ai_selected_rows[STANDARD_COLUMNS])
                 st.toast("Formula loaded - check Compatibility, Properties, Regulatory, Cost, and AI Assistant tabs.", icon="✅")
         with act2:
             if st.button("🆕 Start over (new formula)", width="stretch"):
@@ -1218,18 +1239,55 @@ with tab_cost:
             st.caption(f"Worldwide-database costs converted from USD at 1 USD = {fx_rate:g} {currency_code} (editable in the sidebar). In-house costs are used exactly as you entered them.")
 
         st.divider()
-        st.markdown("**Substitute suggestions** (same function, cheaper and/or more sustainable)")
-        target = st.selectbox("Find alternatives for", [r["inci_name"] for r in st.session_state.formula])
-        subs = find_substitutes(target, working_df)
-        if subs:
-            subs_df = pd.DataFrame(subs).rename(columns={
-                "inci_name": "Ingredient", "cost_per_kg_usd": f"Cost/kg ({currency_symbol})",
-                "cost_delta_usd_per_kg": f"Savings/kg ({currency_symbol})",
-                "sustainability_score": "Sustainability", "sustainability_delta": "Sustainability Δ",
-            })
-            st.dataframe(subs_df, width="stretch")
-        else:
-            st.info("No same-function alternatives found in the current database for this ingredient.")
+        st.markdown("**Substitute suggestions**")
+        target = st.selectbox("Find alternatives for", [r["inci_name"] for r in st.session_state.formula], key="substitute_target")
+
+        local_tab, web_tab = st.tabs(["📋 From your database", "🔍 Search worldwide"])
+        with local_tab:
+            subs = find_substitutes(target, working_df)
+            if subs:
+                subs_df = pd.DataFrame(subs).rename(columns={
+                    "inci_name": "Ingredient", "cost_per_kg_usd": f"Cost/kg ({currency_symbol})",
+                    "cost_delta_usd_per_kg": f"Savings/kg ({currency_symbol})",
+                    "sustainability_score": "Sustainability", "sustainability_delta": "Sustainability Δ",
+                })
+                st.dataframe(subs_df, width="stretch")
+            else:
+                st.info("No same-function alternatives found in your local database for this ingredient.")
+
+        with web_tab:
+            st.caption("Searches the web live for real, currently-available alternatives beyond your local database - not limited to what's already on file.")
+            if st.button(f"🔍 Search worldwide for alternatives to {target}", key="search_alt_btn"):
+                if not ai_available:
+                    st.error("No Gemini API key configured. Add one in the sidebar, or configure Secrets/.env.")
+                else:
+                    target_info = working_df[working_df["inci_name"] == target]
+                    target_function = target_info.iloc[0]["function"] if not target_info.empty else ""
+                    target_category = target_info.iloc[0]["category"] if not target_info.empty else ""
+                    with st.status(f"Searching worldwide alternatives for {target}...", expanded=False) as status:
+                        try:
+                            alt_results = search_alternative_materials(
+                                api_keys, target, target_function, target_category,
+                                on_fallback=make_status_fallback_callback(status, "Searching..."),
+                            )
+                            st.session_state.web_alternatives = {"target": target, "results": alt_results}
+                            status.update(label=f"Found {len(alt_results)} alternative(s)!" if alt_results else "No alternatives found", state="complete")
+                        except (AIError, FormulaGenerationError) as e:
+                            status.update(label="Search failed", state="error")
+                            st.error(str(e))
+
+            cached = st.session_state.get("web_alternatives")
+            if cached and cached["target"] == target:
+                if cached["results"]:
+                    alt_df = pd.DataFrame(cached["results"]).rename(columns={
+                        "inci_name": "Ingredient", "category": "Category", "function": "Function",
+                        "estimated_cost_per_kg_usd": "Est. Cost/kg (USD)", "reason": "Why it's a good alternative",
+                        "source_confidence": "Confidence",
+                    })
+                    st.dataframe(alt_df, width="stretch", hide_index=True)
+                    st.caption("AI-researched from current web sources - costs are estimates, verify before sourcing.")
+                else:
+                    st.info("No alternatives found via search for this ingredient.")
 
 # ==========================================================================
 # TAB: AI Assistant

@@ -125,17 +125,31 @@ change, every part of the app references that list dynamically.
   score, stock, and notes are optional but improve the AI's formulation
   quality. You can also add/edit rows directly in the in-app table.
   Re-uploading merges into what you already have (matching names get
-  updated, everything else is kept) rather than wiping the table.
-- Choose a sourcing strategy: **In-House**, **Worldwide** (the built-in
-  ~45-ingredient sample database), or **In-House + Worldwide**. On a name
-  collision, your in-house cost/data wins.
-- **Live web search for worldwide ingredients** is built but currently
-  dormant: the original implementation relied on Groq's search-capable
-  models, which have been removed along with Groq itself. The app
-  gracefully falls back to the static database with an explanatory caption.
-  See `utils/ai_client.py`'s `WEB_SEARCH_CAPABLE_MODELS` (currently empty)
-  if you want to investigate re-enabling this via a confirmed
-  search-capable Gemini model.
+  updated, everything else is kept) rather than wiping the table. If an
+  in-house material shares a name with one in the worldwide database, your
+  in-house cost/data takes precedence.
+- Choose a sourcing strategy: **In-House**, **Worldwide**, or **In-House +
+  Worldwide**.
+  - **In-House** keeps the AI strictly within your uploaded material list -
+    useful when you can only actually source what's already in your
+    inventory.
+  - **Worldwide** (or **In-House + Worldwide**) gives the AI a genuinely
+    free hand: it is *not* limited to the built-in ~45-ingredient sample
+    database. It searches the web live (via Gemini's native Google Search
+    grounding) for real, currently-available ingredients suited to your
+    brief, and can also name any other real ingredient it's confident about
+    from its own knowledge - it just has to be a real, correctly-named,
+    commercially available material, never an invented one. Ingredients it
+    selects that aren't already in the database get their own AI-estimated
+    category, function, and cost so the rest of the app (cost calculator,
+    property estimator, technical profile) can still work with them -
+    clearly labeled as estimates, not verified supplier quotes. Nothing is
+    dropped or restricted just because it isn't in the local database.
+  - The web search step is best-effort: if it fails for any reason, formula
+    generation still proceeds using the AI's own knowledge instead - you
+    won't see an error, just a quieter formula (no research panel).
+  - After generating, a "🔍 N worldwide ingredient(s) found via live web
+    search" panel shows exactly what the search step found, if anything.
 
 **Step 2 - Product brief**
 - Pick a product category/type (Skincare, Color Cosmetics, Haircare,
@@ -143,15 +157,25 @@ change, every part of the app references that list dynamically.
   Mid-Range / Premium).
 - Describe what you want in plain language (skin type, texture, key actives,
   claims, anything to avoid).
+- Optionally name a **benchmark product** - a real or well-known product to
+  use as a sensory/performance reference point (e.g. "similar texture to
+  CeraVe Moisturizing Cream, but lighter"). The AI uses this to calibrate
+  viscosity, richness, absorption speed, and finish - it's explicitly
+  instructed not to copy that product's actual formula, branding, or claims,
+  just to target a comparable feel. This carries through refinements too.
 
 **Step 3 - Generate**
-- The AI is only allowed to choose ingredients from the exact candidate list
-  you gave it (grounded by real cost/source data) and must return structured
-  JSON. The app then independently: validates every ingredient name against
-  the real candidate list (dropping anything hallucinated, with a visible
-  warning), rescales percentages to sum to exactly 100%, and re-runs the same
-  deterministic pH/viscosity/stability, compatibility, regulatory, and cost
-  engines used elsewhere in the app on the result - the AI proposes, the app
+- For **In-House** sourcing, the AI is restricted to your exact material
+  list, and anything it hallucinates outside that list is dropped with a
+  visible warning. For **Worldwide** sourcing (or In-House + Worldwide), the
+  AI has a free hand - see the walkthrough above - so nothing is dropped or
+  warned about just for being outside the local database.
+- Either way, the app independently re-validates the result: ingredient
+  percentages are checked against 100% (an unusually bad total automatically
+  triggers a retry with a different model rather than blind rescaling - see
+  the AI provider section above), and the same deterministic
+  pH/viscosity/stability, compatibility, regulatory, and cost engines used
+  elsewhere in the app run on the final result - the AI proposes, the app
   disposes.
 - Results show phased ingredient tables with gram quantities for your batch
   size, live property/compatibility/regulatory checks, unit economics
@@ -182,10 +206,11 @@ sunscreens, or any formula containing mineral UV filters) combined UV filter
 loading. This is deliberately **not** AI-generated - SPF is a regulated,
 lab-tested claim (FDA OTC monograph / ISO 24444), so rather than let an AI
 guess a plausible-sounding number, the app reports the real UV filter
-percentage and maps it to a heavily-caveated directional tier ("in the range
-commonly used for ~SPF 30 mineral formulations") with a loud disclaimer that
-it is not a substitute for actual testing. The same technical profile also
-appears in the Properties tab for manually-built formulas.
+percentage and maps it to a directional tier ("in the range commonly used
+for ~SPF 30 mineral formulations") - a formulation-range reference, not a
+tested SPF value; any real SPF claim still requires standardized lab
+testing before labeling or sale. The same technical profile also appears in
+the Properties tab for manually-built formulas.
 
 ## Currency
 
@@ -213,14 +238,18 @@ data/ingredients.csv           ~45 worldwide cosmetic ingredients: category,
                                 cost/kg (USD), sustainability score, typical pH
                                 range, and EU/US/India allowed status + limits
 data/incompatibilities.json    Known ingredient-pair interaction rules
-utils/ai_client.py             Gemini-only AI client: dual-key + automatic
+utils/ai_client.py             Gemini AI client: dual-key + automatic
                                 model fallback (deprecated models, rate
                                 limits, and unusable-content all trigger
-                                switching), retry/backoff on transient errors
-utils/formula_ai.py            AI formula generation + refinement + live web
-                                search for worldwide ingredients: prompt
-                                building, strict JSON validation, hallucination
-                                filtering, percentage renormalization
+                                switching), retry/backoff on transient errors,
+                                plus native-API Google Search grounding for
+                                worldwide ingredient research
+utils/formula_ai.py            AI formula generation + refinement: prompt
+                                building (free-hand for Worldwide sourcing,
+                                restricted for In-House-only), JSON validation,
+                                percentage-total checking, registration of
+                                AI-selected off-database ingredients, worldwide
+                                ingredient research, and alternative-material search
 utils/inhouse_materials.py     Excel/CSV upload parsing, template generator,
                                 in-house + worldwide merge logic
 utils/currency.py              Currency options, USD conversion, formatting
@@ -260,15 +289,20 @@ top of `app.py` (commented) to match.
 ### Design principle: AI proposes, the app disposes
 
 All the numbers that actually matter for safety/compliance/cost - regulatory
-limits, pH ranges, ingredient prices, incompatibility flags - come from the
-local CSV/JSON data and plain Python math, **not** from the LLM. In Formula
-Studio, the AI is only allowed to pick ingredients from the exact candidate
-list it's handed (so cost/availability is always real), and every formula it
-returns is re-validated in plain Python: hallucinated ingredient names are
-stripped with a visible warning, and percentages are rescaled to sum to
-exactly 100%. In the AI Assistant tab, Gemini is only called to add qualitative
-interpretation on top of numbers the app already computed, and is explicitly
-told not to invent new regulatory figures. This keeps the tool useful
+limits, pH ranges, incompatibility flags, and any cost the app itself
+already has on file - come from local CSV/JSON data and plain Python math,
+**not** from the LLM. This holds even with In-House-only sourcing (the AI is
+strictly limited to your real, costed material list there) and even under
+Worldwide's free-hand sourcing: the AI can name any real ingredient, but
+every formula is still independently re-validated in plain Python -
+percentages are checked against 100% (triggering an automatic retry/model
+switch on a bad total, not blind rescaling - see the AI provider section
+above), and any ingredient the AI selects outside the known database is
+registered with its own AI-supplied cost estimate rather than silently
+trusted with no data behind it. In the AI Assistant tab, Gemini is only
+called to add qualitative interpretation on top of numbers the app already
+computed, and is explicitly told not to invent new regulatory figures. This
+keeps the tool useful - including genuinely open-ended worldwide sourcing -
 without inheriting an LLM's hallucination risk on the facts that matter most.
 
 ## Mobile support
@@ -295,6 +329,27 @@ material, register it via the **"Register a new material"** panel at the top
 of the tab, either by typing it in directly or importing an Excel/CSV file -
 the same importer Formula Studio uses, so materials you add in either place
 are available everywhere in the app immediately.
+
+## Finding material alternatives
+
+In the Cost & Sustainability tab, pick any ingredient in your formula and
+choose how to search for alternatives:
+
+- **📋 From your database** - instant, same-function matching against your
+  local worldwide + in-house materials (same as before).
+- **🔍 Search worldwide** - a live web search (via the same native Gemini
+  Google Search grounding used for Worldwide sourcing) for real,
+  currently-available substitute ingredients beyond your local database,
+  each with an estimated cost and a stated reason it's a good fit (cost,
+  sustainability, availability, or performance). This is opt-in (a button,
+  not automatic) since it's a live search call - results are cached per
+  ingredient until you search again or pick a different target.
+
+Ingredients an AI formula selected from the web (not your local database)
+are automatically registered when you click **"Load into other tabs"**, so
+their cost/function data carries over correctly into the Cost tab, Manual
+Builder, and everywhere else - not just shown once in Formula Studio's
+results and then forgotten.
 
 ## Regulatory methodology
 
@@ -326,7 +381,10 @@ qualified regulatory affairs review.
   calibrated pH meter, viscometer, and real stability protocol (accelerated
   aging, freeze-thaw cycling, centrifuge testing).
 - Cost figures are illustrative market-rate approximations, not live supplier
-  quotes.
+  quotes. **Costs for AI-selected worldwide ingredients (Worldwide sourcing's
+  free-hand selections) are AI estimates from search/its own knowledge, not
+  verified supplier quotes either** - treat them the same way: a useful
+  starting point for R&D costing, not a number to build a purchase order on.
 - **Exchange rates are static illustrative defaults, not a live feed** - when
   using a non-USD currency, update the rate in the sidebar with today's
   actual value for accurate results.

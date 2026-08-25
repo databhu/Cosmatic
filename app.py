@@ -160,7 +160,9 @@ h1, h2, h3 { font-family: 'Poppins', sans-serif !important; font-weight: 700 !im
     border-radius:999px; font-size:0.85rem; margin:0.2rem 0.3rem 0.2rem 0; }
 
 .result-card { background:#f7f5ff; border:1px solid #e3daff; border-radius:14px;
-    padding:1.3rem 1.5rem; margin-bottom:1rem; word-wrap: break-word; overflow-wrap: break-word; }
+    padding:1.3rem 1.5rem; margin-bottom:1rem; word-wrap: break-word; overflow-wrap: break-word;
+    color: #1A1533; }
+.result-card h1, .result-card h2, .result-card h3 { color: #1A1533 !important; }
 .step-label { color:#8154FC; font-weight:700; letter-spacing:1px; font-size:0.8rem;
     text-transform:uppercase; margin-bottom:-0.4rem; }
 .version-pill { display:inline-block; background:#f0edfd; color:#524a7a; padding:0.2rem 0.7rem;
@@ -213,6 +215,21 @@ h1, h2, h3 { font-family: 'Poppins', sans-serif !important; font-weight: 700 !im
 
     /* Radio groups (several are horizontal=True) get tighter gaps so options wrap cleanly */
     .stRadio > div { gap: 0.4rem !important; row-gap: 0.5rem !important; }
+
+    /* Tab bar: smaller, tighter tabs so more fit without forcing awkward scrolling,
+       and a comfortable tap target on each */
+    [data-testid="stTabs"] button[role="tab"] { font-size: 0.82rem; padding: 0.5rem 0.7rem; min-height: 40px; }
+    [data-testid="stTabs"] [data-baseweb="tab-list"] { gap: 0.2rem; }
+
+    /* Expanders: comfortable tap target on the header row */
+    [data-testid="stExpander"] summary { min-height: 44px; font-size: 0.92rem; }
+
+    /* Body text and captions: slightly larger line-height for readability on small screens */
+    p, .stMarkdown, [data-testid="stCaptionContainer"] { line-height: 1.5; }
+    [data-testid="stCaptionContainer"] { font-size: 0.82rem; }
+
+    /* Alert boxes (info/warning/success/error): tighter padding, readable text */
+    [data-testid="stAlert"] { padding: 0.7rem 0.9rem; font-size: 0.9rem; }
 }
 
 @media (max-width: 480px) {
@@ -220,6 +237,7 @@ h1, h2, h3 { font-family: 'Poppins', sans-serif !important; font-weight: 700 !im
     h1 { font-size: 1.25rem !important; }
     [data-testid="stMetricValue"] { font-size: 1.1rem !important; }
     .result-card { padding: 0.85rem 0.9rem; }
+    [data-testid="stTabs"] button[role="tab"] { font-size: 0.76rem; padding: 0.45rem 0.55rem; }
 }
 </style>
 """
@@ -697,9 +715,9 @@ with tab_studio:
         st.markdown(
             f"""
             <div class="result-card">
-                <h2 style="margin-top:0;">{meta['formula_name']}</h2>
+                <h2 style="margin-top:0; color:#1A1533;">{meta['formula_name']}</h2>
                 {positioning_badge(result['positioning'])} {badge(result['product_category'] + ' · ' + result['product_subtype'], 'badge-worldwide')}
-                <p style="margin-top:0.8rem; font-size:1.02rem;">{meta['product_summary']}</p>
+                <p style="margin-top:0.8rem; font-size:1.02rem; color:#1A1533;">{meta['product_summary']}</p>
             </div>
             """,
             unsafe_allow_html=True,
@@ -774,7 +792,7 @@ with tab_studio:
         st.markdown("**🔬 Technical product profile**")
         tech_profile = compute_technical_profile(r_flat_df, candidate_df, result["product_category"], result["product_subtype"])
         tech_description = render_technical_description(tech_profile, result["product_category"], result["product_subtype"])
-        st.markdown(f'<div class="result-card">{tech_description}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="result-card"><span style="color:#1A1533;">{tech_description}</span></div>', unsafe_allow_html=True)
         st.caption("Computed directly from this formula's actual ingredients/percentages - not AI-generated, so it can't drift from what's really in the formula.")
 
         with st.expander("📋 Full technical breakdown"):
@@ -831,9 +849,9 @@ with tab_studio:
                 with col:
                     cost_str = f"{fmt(u['cost_per_kg_usd'])}/kg" if u.get("cost_per_kg_usd") else "cost n/a"
                     st.markdown(
-                        f"""<div class="result-card"><b>{u['inci_name']}</b><br>
+                        f"""<div class="result-card"><b style="color:#1A1533;">{u['inci_name']}</b><br>
                         <span style="color:#888;font-size:0.85rem;">{cost_str}</span>
-                        <p style="font-size:0.9rem;">{u['reason']}</p></div>""",
+                        <p style="font-size:0.9rem; color:#1A1533;">{u['reason']}</p></div>""",
                         unsafe_allow_html=True,
                     )
 
@@ -1148,7 +1166,7 @@ with tab_props:
         st.markdown("**🔬 Technical product profile**")
         tech_profile = compute_technical_profile(fdf, working_df, "", "")
         tech_description = render_technical_description(tech_profile, "", "")
-        st.markdown(f'<div class="result-card">{tech_description}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="result-card"><span style="color:#1A1533;">{tech_description}</span></div>', unsafe_allow_html=True)
         st.caption("Computed directly from this formula's actual ingredients/percentages.")
 
 # ==========================================================================

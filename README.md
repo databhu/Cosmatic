@@ -228,6 +228,9 @@ Builder, Cost & Sustainability, unit economics, and the Excel export.
 
 ```
 app.py                        Streamlit UI - Formula Studio + 6 supporting tabs
+.streamlit/config.toml         Locks the app to a light theme (see Mobile
+                                support below) - fixes dark-mode contrast
+                                issues and gives a consistent look for everyone
 assets/cosmogen_favicon.png    Browser-tab favicon (64x64)
 assets/cosmogen_icon.png       Square icon at higher resolution (512x512) -
                                 spare brand asset, not currently rendered
@@ -307,17 +310,30 @@ without inheriting an LLM's hallucination risk on the facts that matter most.
 
 ## Mobile support
 
-The app is responsive down to phone-sized screens (tested at 375px/iPhone
-width): the hero banner stacks the logo above the text instead of cramming
-them side by side, buttons go full-width with touch-friendly tap targets
-(44px minimum), headings and metric numbers scale down so they don't
-dominate a small screen, form inputs use 16px text (avoids iOS's
-auto-zoom-on-focus), and tables scroll horizontally instead of squashing
-columns unreadably. Streamlit's own layout (columns, containers) already
-stacks responsively on narrow viewports by default; the custom CSS in
-`app.py`'s `CUSTOM_CSS` block (look for the `@media` blocks near the bottom)
-handles the elements this app adds on top of that - the hero banner, badges,
-result cards, and pills.
+**Theme is locked to light mode** (`.streamlit/config.toml`) regardless of
+the visitor's device/browser dark-mode setting. The app's custom cards,
+hero banner, and badges are all designed against a light page background
+with explicit text colors on every element - without a fixed theme, a
+visitor whose phone defaults to dark mode would get Streamlit's dark theme
+colors colliding with that design (this was a real reported bug: some card
+text was inheriting a theme-dependent color instead of an explicit one,
+making it unreadable against its own background on some devices). Every
+custom-styled element now sets its own text color explicitly rather than
+relying on inheritance, so this can't recur even if a visitor manually
+forces dark mode via Streamlit's own settings menu.
+
+The app is also responsive down to phone-sized screens (tested at
+375px/iPhone width): the hero banner stacks the logo above the text instead
+of cramming them side by side, buttons go full-width with touch-friendly
+tap targets (44px minimum), headings and metric numbers scale down so they
+don't dominate a small screen, form inputs use 16px text (avoids iOS's
+auto-zoom-on-focus), tab bars and expanders get comfortable tap targets and
+tighter sizing, and tables scroll horizontally instead of squashing columns
+unreadably. Streamlit's own layout (columns, containers) already stacks
+responsively on narrow viewports by default; the custom CSS in `app.py`'s
+`CUSTOM_CSS` block (look for the `@media` blocks near the bottom) handles
+the elements this app adds on top of that - the hero banner, badges, result
+cards, and pills.
 
 ## Manual Builder
 

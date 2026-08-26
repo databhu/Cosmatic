@@ -426,6 +426,33 @@ qualified regulatory affairs review.
   visitor's session and resets on reload/redeploy - it isn't shared between
   visitors, but it also isn't backed up anywhere.
 
+## Google Search Console
+
+Set `GSC_SITE_VERIFICATION` (Secrets or `.env`) to the verification code
+from GSC's `<meta name="google-site-verification" content="...">` tag, and
+the app will try to inject it into the page `<head>` via JavaScript
+(`st.html(..., unsafe_allow_javascript=True)`) on load. Leave it unset and
+nothing happens - no error, no injected tag.
+
+**This is best-effort, not guaranteed to pass GSC's check.** Streamlit
+Community Cloud gives no way to control the actual server-rendered HTML,
+and Google's site-ownership verification typically fetches the raw HTML
+without executing JavaScript - multiple developers have reported on
+Streamlit's own community forum that both `st.markdown` and
+`st.components.v1.html` injection attempts fail GSC verification for
+exactly this reason. This app uses the current, non-deprecated `st.html()`
+API instead (content isn't iframed, so there's no cross-origin issue at
+least for what a real browser sees), but whether Google's specific
+verification crawler executes it is outside this app's control.
+
+**The reliable alternative**: point a custom domain at this app (Streamlit
+Community Cloud supports this under the app's Settings) and verify via
+GSC's **"Domain name provider"** method instead - a DNS TXT record at your
+registrar, completely independent of what Streamlit serves. This is the
+only method guaranteed to work without a custom Docker/server deployment
+where you control the build and could bake a verification file directly
+into the served static assets.
+
 ## Deploy to Streamlit Community Cloud (free hosting)
 
 1. Push this folder's contents to a GitHub repo (repo root = `app.py`,

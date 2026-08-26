@@ -47,6 +47,58 @@ def _load_favicon():
 st.set_page_config(page_title="CosmoGen | AI Cosmetic Formulation Studio", page_icon=_load_favicon(), layout="wide")
 
 
+def _inject_meta_tags():
+    """
+    Best-effort injection of custom <meta> tags (e.g. Google Search Console
+    site verification) into the page <head> via JavaScript, using st.html()
+    with unsafe_allow_javascript=True - unlike the older, deprecated
+    st.components.v1.html(), st.html() content is NOT iframed, so this runs
+    in the same document as the rest of the app (no cross-origin issues).
+
+    Still a workaround, not a guarantee: Streamlit Community Cloud gives no
+    way to control the actual server-rendered HTML, and verification
+    crawlers that fetch raw HTML without executing JavaScript (which
+    includes Google's site-ownership check, per multiple developer reports
+    on Streamlit's own community forum) may not see a tag added this way.
+    The reliable alternative is DNS-based verification against a custom
+    domain pointed at this app - see the README's "Google Search Console"
+    section.
+
+    Configure via GSC_SITE_VERIFICATION in Secrets/.env - if unset, this is
+    a no-op (nothing is injected, nothing breaks).
+    """
+    verification_code = ""
+    try:
+        verification_code = st.secrets.get("GSC_SITE_VERIFICATION", "")
+    except Exception:
+        pass
+    if not verification_code:
+        verification_code = os.environ.get("GSC_SITE_VERIFICATION", "")
+    if not verification_code:
+        return
+
+    st.html(
+        f"""
+        <script>
+        (function() {{
+            try {{
+                if (!document.querySelector('meta[name="google-site-verification"]')) {{
+                    var meta = document.createElement('meta');
+                    meta.name = 'google-site-verification';
+                    meta.content = '{verification_code}';
+                    document.head.appendChild(meta);
+                }}
+            }} catch (e) {{ /* fail silently rather than break the app */ }}
+        }})();
+        </script>
+        """,
+        unsafe_allow_javascript=True,
+    )
+
+
+_inject_meta_tags()
+
+
 @st.cache_data
 def _load_logo_base64():
     """Base64-encode the CosmoGen icon+wordmark lockup once so it can be

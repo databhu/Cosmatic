@@ -8,12 +8,16 @@ calibrated pH meter and a viscometer.
 
 import pandas as pd
 
+from utils.safe_convert import safe_float
+
 
 def estimate_ph(formula_df: pd.DataFrame, ingredients_df: pd.DataFrame):
     """
     Weighted-average of each ingredient's typical pH midpoint, weighted by
     its % concentration in the formula. Ingredients with no defined pH range
-    (fragrance, UV filters, etc.) are excluded from the weighting.
+    (fragrance, UV filters, etc.) are excluded from the weighting, as are
+    rows with a missing/invalid percent (e.g. a blank cell in a manually
+    edited formula table).
     """
     weighted_sum = 0.0
     weight_total = 0.0
@@ -24,10 +28,14 @@ def estimate_ph(formula_df: pd.DataFrame, ingredients_df: pd.DataFrame):
         if info.empty:
             continue
         info = info.iloc[0]
-        if pd.isna(info["typical_ph_min"]) or pd.isna(info["typical_ph_max"]):
+        ph_min = safe_float(info["typical_ph_min"])
+        ph_max = safe_float(info["typical_ph_max"])
+        if ph_min is None or ph_max is None:
             continue
-        midpoint = (float(info["typical_ph_min"]) + float(info["typical_ph_max"])) / 2
-        pct = float(row["percent"])
+        pct = safe_float(row.get("percent"))
+        if pct is None:
+            continue
+        midpoint = (ph_min + ph_max) / 2
         weighted_sum += midpoint * pct
         weight_total += pct
         contributors.append((row["inci_name"], midpoint, pct))
@@ -62,7 +70,9 @@ def estimate_viscosity(formula_df: pd.DataFrame, ingredients_df: pd.DataFrame):
         if info.empty:
             continue
         info = info.iloc[0]
-        pct = float(row["percent"])
+        pct = safe_float(row.get("percent"))
+        if pct is None:
+            continue
         category = info["category"]
 
         if info["inci_name"] == "Aqua":

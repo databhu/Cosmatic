@@ -13,6 +13,8 @@ heavily-caveated directional tier based on commonly cited mineral-sunscreen
 formulation ranges - explicitly not a substitute for actual SPF testing.
 """
 
+from utils.safe_convert import safe_float
+
 UV_FILTER_FUNCTION_MARKERS = ("UV filter",)
 
 # Rough, commonly-cited formulation ranges for combined mineral UV filter
@@ -59,7 +61,9 @@ def compute_technical_profile(formula_df, ingredients_df, product_category: str 
         if info.empty:
             continue
         info = info.iloc[0]
-        pct = float(row["percent"])
+        pct = safe_float(row.get("percent"))
+        if pct is None:
+            continue
         category = info.get("category") if hasattr(info, "get") else info["category"]
         function = info.get("function") if hasattr(info, "get") else info["function"]
         name = row["inci_name"]

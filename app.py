@@ -16,6 +16,7 @@ from utils.ai_client import (
 )
 from utils.property_estimator import estimate_ph, estimate_viscosity, estimate_stability
 from utils.compatibility_checker import check_compatibility, sort_flags
+from utils.safe_convert import safe_float
 from utils.regulatory_checker import check_regulatory, summarize, REGIONS
 from utils.cost_calculator import calculate_cost, find_substitutes, calculate_unit_economics, units_from_batch
 from utils.inhouse_materials import (
@@ -779,6 +780,8 @@ with tab_studio:
 
             if cost_result["missing_cost"]:
                 st.caption(f"⚠️ No cost on file: {', '.join(cost_result['missing_cost'])}")
+            if cost_result["missing_percent"]:
+                st.caption(f"⚠️ No usable percentage: {', '.join(cost_result['missing_percent'])}")
 
         with st.expander("📖 Positioning & sourcing rationale"):
             st.write(f"**Positioning:** {meta['positioning_rationale']}")
@@ -1054,7 +1057,7 @@ with tab_build:
 
     with col2:
         st.metric("Ingredients", len(st.session_state.formula))
-        total_pct = sum(r["percent"] for r in st.session_state.formula)
+        total_pct = sum(safe_float(r.get("percent"), default=0.0) for r in st.session_state.formula)
         st.metric("Total %", round(total_pct, 2), delta=round(total_pct - 100, 2))
         if st.button("🗑️ Clear formula"):
             st.session_state.formula = []
@@ -1075,7 +1078,7 @@ with tab_build:
         )
         st.session_state.formula = edited.to_dict("records")
 
-        total_pct = sum(r["percent"] for r in st.session_state.formula)
+        total_pct = sum(safe_float(r.get("percent"), default=0.0) for r in st.session_state.formula)
         if abs(total_pct - 100) > 0.05:
             st.warning(f"Total is {total_pct:.2f}% — adjust so the formula sums to 100% before relying on the estimates in other tabs.")
         else:
@@ -1220,7 +1223,7 @@ with tab_reg:
 
         n_unknown = sum(1 for r in results if r["status"] == "unknown")
         if n_unknown:
-            st.info(f"{n_unknown} ingredient(s) have no regulatory data on file (see the methodology panel above) - these need manual verification before use.")
+            st.info(f"{n_unknown} ingredient(s) need manual verification - either no regulatory data on file for this region, or no usable percentage in the formula (see the table and the methodology panel above).")
 
 # ==========================================================================
 # TAB: Cost & Sustainability
@@ -1252,6 +1255,8 @@ with tab_cost:
             st.warning(f"Not in database: {', '.join(cost_result['missing_from_db'])}")
         if cost_result["missing_cost"]:
             st.warning(f"No cost on file (excluded from total): {', '.join(cost_result['missing_cost'])}")
+        if cost_result["missing_percent"]:
+            st.warning(f"No usable percentage on file (excluded from calculations - check for a blank cell in the formula table): {', '.join(cost_result['missing_percent'])}")
 
         if currency_code != "USD":
             st.caption(f"Worldwide-database costs converted from USD at 1 USD = {fx_rate:g} {currency_code} (editable in the sidebar). In-house costs are used exactly as you entered them.")

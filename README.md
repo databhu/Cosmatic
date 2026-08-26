@@ -260,6 +260,10 @@ utils/property_estimator.py    Deterministic pH / viscosity / stability heuristi
 utils/compatibility_checker.py Rule-based pairwise incompatibility lookup
 utils/regulatory_checker.py    Region-by-region allowed/limit checking
 utils/cost_calculator.py       Batch costing, unit economics, substitute finder
+utils/safe_convert.py          Shared safe_float() helper - defensively handles
+                                None/NaN/blank/invalid values so a single bad
+                                cell (e.g. a blank percent in a manually
+                                edited formula) never crashes a calculation
 utils/technical_profile.py     Deterministic technical product profile (active
                                 ingredients, UV filter analysis, emulsion type,
                                 preservation system) - no AI involved
@@ -345,6 +349,13 @@ material, register it via the **"Register a new material"** panel at the top
 of the tab, either by typing it in directly or importing an Excel/CSV file -
 the same importer Formula Studio uses, so materials you add in either place
 are available everywhere in the app immediately.
+
+**A blank or invalid cell never crashes a tab.** If you clear a percent cell
+while editing, or a material is missing its cost/pH/sustainability data, the
+affected row is simply excluded from that specific calculation (with a
+clear message explaining why, e.g. "no usable percentage on file") rather
+than breaking the whole page - every calculation engine in the app
+(`utils/safe_convert.py`) is built to degrade gracefully like this.
 
 ## Finding material alternatives
 

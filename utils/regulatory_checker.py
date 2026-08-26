@@ -14,6 +14,8 @@ with a verified feed from the official sources:
 
 import pandas as pd
 
+from utils.safe_convert import safe_float
+
 REGIONS = {
     "EU": {"allowed_col": "eu_allowed", "max_col": "eu_max_percent", "notes_col": "eu_notes"},
     "US": {"allowed_col": "us_allowed", "max_col": "us_max_percent", "notes_col": "us_notes"},
@@ -26,11 +28,12 @@ def check_regulatory(formula_df, ingredients_df, region: str):
     results = []
 
     for _, row in formula_df.iterrows():
+        row_pct = safe_float(row.get("percent"))
         info = ingredients_df[ingredients_df["inci_name"] == row["inci_name"]]
         if info.empty:
             results.append({
                 "inci_name": row["inci_name"],
-                "percent": row["percent"],
+                "percent": row_pct,
                 "status": "unknown",
                 "message": "Not in sample database - verify manually against official regulatory sources.",
             })
@@ -40,7 +43,15 @@ def check_regulatory(formula_df, ingredients_df, region: str):
         allowed = info[cols["allowed_col"]]
         max_pct = info[cols["max_col"]]
         notes = info[cols["notes_col"]]
-        pct = float(row["percent"])
+        if row_pct is None:
+            results.append({
+                "inci_name": row["inci_name"],
+                "percent": None,
+                "status": "unknown",
+                "message": "No usable percentage on file for this row (blank or invalid) - can't assess against regional limits.",
+            })
+            continue
+        pct = row_pct
 
         allowed_is_blank = pd.isna(allowed) or str(allowed).strip() == ""
         if allowed_is_blank:

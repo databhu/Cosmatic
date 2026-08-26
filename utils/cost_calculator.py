@@ -2,24 +2,32 @@
 
 import pandas as pd
 
+from utils.safe_convert import safe_float
+
 
 def calculate_cost(formula_df: pd.DataFrame, ingredients_df: pd.DataFrame, batch_size_kg: float):
     line_items = []
     total_cost = 0.0
     missing = []
     missing_cost = []
+    missing_percent = []
 
     for _, row in formula_df.iterrows():
+        pct = safe_float(row.get("percent"))
+        if pct is None:
+            missing_percent.append(row["inci_name"])
+            continue
+
         info = ingredients_df[ingredients_df["inci_name"] == row["inci_name"]]
         if info.empty:
             missing.append(row["inci_name"])
             continue
         info = info.iloc[0]
-        pct = float(row["percent"])
         kg_used = batch_size_kg * (pct / 100.0)
 
         raw_cost = info.get("cost_per_kg_usd") if hasattr(info, "get") else info["cost_per_kg_usd"]
-        if pd.isna(raw_cost) or str(raw_cost).strip() == "":
+        cost_per_kg = safe_float(raw_cost)
+        if cost_per_kg is None:
             missing_cost.append(row["inci_name"])
             line_items.append({
                 "inci_name": row["inci_name"],
@@ -31,7 +39,6 @@ def calculate_cost(formula_df: pd.DataFrame, ingredients_df: pd.DataFrame, batch
             })
             continue
 
-        cost_per_kg = float(raw_cost)
         line_cost = kg_used * cost_per_kg
         total_cost += line_cost
         sustain = info.get("sustainability_score") if hasattr(info, "get") else info["sustainability_score"]
@@ -50,6 +57,7 @@ def calculate_cost(formula_df: pd.DataFrame, ingredients_df: pd.DataFrame, batch
         "cost_per_kg_batch_usd": round(total_cost / batch_size_kg, 4) if batch_size_kg else 0,
         "missing_from_db": missing,
         "missing_cost": missing_cost,
+        "missing_percent": missing_percent,
     }
 
 
@@ -91,28 +99,6 @@ def batch_size_from_units(units_desired: int, unit_fill_g: float) -> float:
     return (units_desired * unit_fill_g) / 1000.0
 
 
-def _safe_float(value, default=None):
-    """Safely convert a value to float, returning `default` (None unless
-    given) for None, NaN, pandas NA, empty string, or anything else that
-    can't be parsed - never raises. Cost and sustainability data is
-    frequently missing for in-house or AI-selected worldwide ingredients,
-    so every place that reads these fields should go through this rather
-    than calling float() directly."""
-    if value is None:
-        return default
-    try:
-        if pd.isna(value):
-            return default
-    except (TypeError, ValueError):
-        pass
-    if isinstance(value, str) and value.strip() == "":
-        return default
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
 def find_substitutes(ingredient_name: str, ingredients_df: pd.DataFrame, max_results: int = 5):
     """
     Find ingredients that serve the same specific formulation function
@@ -137,8 +123,8 @@ def find_substitutes(ingredient_name: str, ingredients_df: pd.DataFrame, max_res
     # different jobs) - function is specific enough to only surface
     # ingredients that actually serve the same formulation purpose.
     function = info["function"]
-    current_cost = _safe_float(info.get("cost_per_kg_usd") if hasattr(info, "get") else info["cost_per_kg_usd"])
-    current_sustain = _safe_float(info.get("sustainability_score") if hasattr(info, "get") else info["sustainability_score"])
+    current_cost = safe_float(info.get("cost_per_kg_usd") if hasattr(info, "get") else info["cost_per_kg_usd"])
+    current_sustain = safe_float(info.get("sustainability_score") if hasattr(info, "get") else info["sustainability_score"])
 
     candidates = ingredients_df[
         (ingredients_df["function"] == function) &
@@ -150,8 +136,8 @@ def find_substitutes(ingredient_name: str, ingredients_df: pd.DataFrame, max_res
 
     results = []
     for _, row in candidates.iterrows():
-        cand_cost = _safe_float(row.get("cost_per_kg_usd"))
-        cand_sustain = _safe_float(row.get("sustainability_score"))
+        cand_cost = safe_float(row.get("cost_per_kg_usd"))
+        cand_sustain = safe_float(row.get("sustainability_score"))
 
         cost_delta = (current_cost - cand_cost) if (current_cost is not None and cand_cost is not None) else None
         sustain_delta = (cand_sustain - current_sustain) if (current_sustain is not None and cand_sustain is not None) else None
